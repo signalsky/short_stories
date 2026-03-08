@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  ocr-service:
+    build: ./ocr_service
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data  # Mount data volume just in case, though API is primarily used
+    environment:
+      - CUDA_VISIBLE_DEVICES="" # Force CPU mode if GPU is present but not configured
+    restart: always
+
