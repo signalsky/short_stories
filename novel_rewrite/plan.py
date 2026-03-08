@@ -82,7 +82,8 @@ def run_plan(
     
     # 1. Combined Analysis & Enhancement
     prompt = build_combined_plan_prompt(input_text)
-    raw_response = chat_func(prompt=prompt, call_tag="PLAN_COMBINED", trace_logger=trace_logger, json_mode=True)
+    # Using qwen-plus for planning as requested
+    raw_response = chat_func(prompt=prompt, call_tag="PLAN_COMBINED", trace_logger=trace_logger, json_mode=True, model="qwen-plus")
     final_plan = extract_json_object(raw_response)
     
     # Ensure enhancements key exists

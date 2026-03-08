@@ -141,7 +141,8 @@ def run_rename(
         prompt=prompt,
         call_tag="RENAME_ANALYSIS",
         trace_logger=trace_logger,
-        json_mode=True
+        json_mode=True,
+        model="qwen-plus"
     )
     
     mapping = normalize_mapping(extract_json_object(raw_response))

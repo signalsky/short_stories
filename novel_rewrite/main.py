@@ -67,20 +67,33 @@ def chat_qwen(
             trace_logger(f"--- [CALL: {call_tag}] ERROR ---\n{str(e)}\n---------------------------")
         raise
 
+def load_config(config_path: Path) -> dict:
+    if not config_path.exists():
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+    with open(config_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
 def main():
-    parser = argparse.ArgumentParser()
-    # Default input path updated per user request
-    default_input = r"D:\BaiduNetdiskDownload\（草莓）爆款小说合集\《错位五年》.txt"
-    parser.add_argument("--input", default=default_input, help="Path to input novel txt")
-    # API Key hardcoded as default per user request
-    default_key = "you-own-api-key"
-    parser.add_argument("--api-key", default=default_key, help="DashScope API Key")
-    parser.add_argument("--base-url", default="https://dashscope.aliyuncs.com/compatible-mode/v1")
-    parser.add_argument("--model", default="qwen3.5-plus")
-    args = parser.parse_args()
+    base_dir = Path(__file__).parent
+    config_path = base_dir / "config.json"
+    
+    try:
+        config = load_config(config_path)
+    except Exception as e:
+        print(f"Error loading config: {e}")
+        return
+
+    # Use config values
+    input_file = config.get("input_file", "")
+    api_key = config.get("api_key", "")
+    base_url = config.get("base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+    model_name = config.get("model", "qwen3.5-plus")
+
+    if not input_file or not api_key:
+        print("Error: 'input_file' and 'api_key' are required in config.json")
+        return
 
     # Setup Paths
-    base_dir = Path(__file__).parent
     logs_dir = base_dir / "logs"
     logs_dir.mkdir(exist_ok=True)
     
@@ -93,13 +106,15 @@ def main():
             f.write(msg + "\n")
 
     logger(f"Starting Process... Log file: {log_file}")
+    logger(f"Config loaded from {config_path}")
 
     # Bind Chat Function
-    def bound_chat(prompt, json_mode=False, call_tag="", trace_logger=None):
-        return chat_qwen(args.base_url, args.api_key, args.model, prompt, json_mode, call_tag, trace_logger)
+    def bound_chat(prompt, json_mode=False, call_tag="", trace_logger=None, model=None):
+        target_model = model or model_name
+        return chat_qwen(base_url, api_key, target_model, prompt, json_mode, call_tag, trace_logger)
 
     try:
-        input_path = Path(args.input)
+        input_path = Path(input_file)
         if not input_path.exists():
             logger(f"Input file not found: {input_path}")
             return
