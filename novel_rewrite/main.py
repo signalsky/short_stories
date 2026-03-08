@@ -73,7 +73,7 @@ def main():
     default_input = r"D:\BaiduNetdiskDownload\（草莓）爆款小说合集\《错位五年》.txt"
     parser.add_argument("--input", default=default_input, help="Path to input novel txt")
     # API Key hardcoded as default per user request
-    default_key = "sk-9a9a2078201148059d9611e03e7e8423"
+    default_key = "you-own-api-key"
     parser.add_argument("--api-key", default=default_key, help="DashScope API Key")
     parser.add_argument("--base-url", default="https://dashscope.aliyuncs.com/compatible-mode/v1")
     parser.add_argument("--model", default="qwen3.5-plus")
