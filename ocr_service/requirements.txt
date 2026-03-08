@@ -1,0 +1,7 @@
+paddlepaddle>=2.6.2
+paddleocr>=2.7.0.3
+fastapi
+uvicorn
+python-multipart
+opencv-python-headless
+rapidocr-onnxruntime
