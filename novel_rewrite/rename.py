@@ -1,7 +1,7 @@
 import json
 import re
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 def extract_json_object(text: str) -> dict:
     text = text.strip()
@@ -126,14 +126,30 @@ def replace_names(text: str, mapping: dict) -> str:
     pattern = re.compile("|".join(re.escape(k) for k in keys))
     return pattern.sub(lambda m: rep[m.group(0)], text)
 
+def read_novel_text(input_path: Path) -> Tuple[str, str]:
+    raw = input_path.read_bytes()
+    if raw.startswith(b"\xef\xbb\xbf"):
+        return raw.decode("utf-8-sig"), "utf-8-sig"
+    if raw.startswith(b"\xff\xfe") or raw.startswith(b"\xfe\xff"):
+        return raw.decode("utf-16"), "utf-16"
+
+    for enc in ("utf-8", "gb18030", "gbk"):
+        try:
+            return raw.decode(enc), enc
+        except UnicodeDecodeError:
+            continue
+
+    return raw.decode("utf-8", errors="replace"), "utf-8-replace"
+
 def run_rename(
     input_path: Path, 
     output_path: Path, 
     chat_func: Callable, 
     trace_logger: Callable[[str], None]
-) -> str:
+) -> Tuple[str, str]:
     trace_logger(f"[RENAME] Reading input from {input_path}")
-    novel_text = input_path.read_text(encoding="utf-8", errors="ignore")
+    novel_text, used_encoding = read_novel_text(input_path)
+    trace_logger(f"[RENAME] Decoded input using: {used_encoding}")
     prompt = build_rename_prompt(novel_text)
     
     raw_response = chat_func(
