@@ -2,7 +2,8 @@
 import os
 import oss2
 import csv
-import urllib.parse
+import random
+import string
 from datetime import datetime
 from pathlib import Path
 
@@ -37,9 +38,13 @@ def get_next_id():
         print(f"Error reading CSV to determine ID: {e}")
         return 1
 
+def generate_random_suffix(length=6):
+    chars = string.ascii_lowercase + string.digits
+    return ''.join(random.choice(chars) for _ in range(length))
+
 def upload_to_oss(file_path, object_name, oss_config, logger=None):
     """
-    Uploads a file to Aliyun OSS and returns the signed URL.
+    Uploads a file to Aliyun OSS and returns the public URL.
     
     Args:
         file_path (str): The absolute path to the file to upload.
@@ -48,7 +53,7 @@ def upload_to_oss(file_path, object_name, oss_config, logger=None):
         logger (callable): Optional logger function.
         
     Returns:
-        str: The signed URL of the uploaded file.
+        str: The public URL of the uploaded file.
     """
     log = logger if logger else print
     
@@ -71,15 +76,19 @@ def upload_to_oss(file_path, object_name, oss_config, logger=None):
         log(f"Failed to upload to OSS: {e}")
         raise
 
-    # Generate a signed URL valid for 10 years (10 * 365 * 24 * 3600 seconds)
-    expires = 10 * 365 * 24 * 3600
-    url = bucket.sign_url('GET', object_name, expires, slash_safe=True)
+    # Construct public URL
+    bucket_name = oss_config['bucket_name']
+    endpoint = oss_config['endpoint']
     
-    # Ensure the URL uses HTTPS if not automatically included
-    if url.startswith("http://"):
-        url = url.replace("http://", "https://", 1)
+    # Strip protocol from endpoint if present to ensure clean domain
+    if endpoint.startswith('http://'):
+        endpoint = endpoint[7:]
+    elif endpoint.startswith('https://'):
+        endpoint = endpoint[8:]
+        
+    url = f"https://{bucket_name}.{endpoint}/{object_name}"
 
-    log(f"Upload successful. Signed URL (valid for 10 years): {url}")
+    log(f"Upload successful. Public URL: {url}")
     return url
 
 def save_to_csv(file_id, old_title, new_title, url_a, url_b, logger=None):
@@ -127,11 +136,15 @@ def process_upload(modified_file_path, original_file_path, old_title, new_title,
     try:
         file_id = get_next_id()
         
-        # Upload modified file as {id}a
-        url_a = upload_to_oss(modified_file_path, f"{file_id}a", oss_config, logger)
+        # Generate random suffix for each file
+        suffix_a = generate_random_suffix()
+        suffix_b = generate_random_suffix()
         
-        # Upload original file as {id}b
-        url_b = upload_to_oss(original_file_path, f"{file_id}b", oss_config, logger)
+        # Upload modified file as {id}a{suffix}.txt
+        url_a = upload_to_oss(modified_file_path, f"{file_id}a{suffix_a}.txt", oss_config, logger)
+        
+        # Upload original file as {id}b{suffix}.txt
+        url_b = upload_to_oss(original_file_path, f"{file_id}b{suffix_b}.txt", oss_config, logger)
         
         save_to_csv(file_id, old_title, new_title, url_a, url_b, logger)
         return url_a, url_b

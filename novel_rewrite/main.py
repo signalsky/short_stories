@@ -140,12 +140,17 @@ def process_one_novel(input_path: Path, config: dict, bound_chat: Callable, logg
     finally:
         # Cleanup
         logger("\n=== CLEANUP ===")
-        if renamed_path.exists():
-            try:
-                renamed_path.unlink()
-                logger(f"Deleted intermediate file: {renamed_path}")
-            except Exception as e:
-                logger(f"Failed to delete {renamed_path}: {e}")
+        
+        # List of files to cleanup
+        files_to_cleanup = [renamed_path, base_dir / "plan.json"]
+        
+        for file_path in files_to_cleanup:
+            if file_path.exists():
+                try:
+                    file_path.unlink()
+                    logger(f"Deleted intermediate file: {file_path}")
+                except Exception as e:
+                    logger(f"Failed to delete {file_path}: {e}")
 
 def main():
     base_dir = Path(__file__).parent
