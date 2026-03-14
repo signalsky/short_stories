@@ -38,15 +38,15 @@ type NovelProcessor struct {
 
 func NewNovelProcessor() *NovelProcessor {
 	return &NovelProcessor{
-		Width:         1080,
-		Height:        1440,
-		FontSize:      48, // Reasonable for 1080p width phone
-		TitleFontSize: 72, // Larger font for title
+		Width:         734,
+		Height:        1276,
+		FontSize:      32, // Reduced from 48
+		TitleFontSize: 48, // Reduced from 72
 		LineSpacing:   1.5,
-		PaddingLeft:   80,
-		PaddingRight:  80,
-		PaddingTop:    150,
-		PaddingBottom: 100, // Reduced from 150 to allow more lines
+		PaddingLeft:   50,
+		PaddingRight:  50,
+		PaddingTop:    100,
+		PaddingBottom: 30, // Reduced from 100 to allow more lines and fill screen
 		BackgroundPath: "background.png",
 	}
 }
@@ -72,7 +72,10 @@ func (np *NovelProcessor) LoadFromURL(urlStr string) error {
 	if err != nil {
 		return err
 	}
-	np.Content = string(body)
+	content := string(body)
+	content = strings.ReplaceAll(content, "【", "「")
+	content = strings.ReplaceAll(content, "】", "」")
+	np.Content = content
 	
 	// Title should be set by UI before calling this or extracted here
 	// The current requirement is mandatory title input, so we assume np.Title is set externally if empty.
@@ -91,11 +94,14 @@ func (np *NovelProcessor) LoadFromURL(urlStr string) error {
 }
 
 func (np *NovelProcessor) LoadFromFile(path string) error {
-	content, err := os.ReadFile(path)
+	contentBytes, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
-	np.Content = string(content)
+	content := string(contentBytes)
+	content = strings.ReplaceAll(content, "【", "「")
+	content = strings.ReplaceAll(content, "】", "」")
+	np.Content = content
 	
 	// Title is set by UI
 	if np.Title == "" {
@@ -150,9 +156,8 @@ func (np *NovelProcessor) Paginate() error {
 	if np.Title != "" {
 		// Load title font to measure
 		if err := dc.LoadFontFace(np.FontPath, np.TitleFontSize); err == nil {
-			// Wrap title if needed? Assume single line or wrap
-			// Let's assume title might wrap
-			titleLines := dc.WordWrap(np.Title, maxWidth)
+			// Wrap title if needed
+			titleLines := np.WrapTitle(np.Title, maxWidth, dc)
 			titleHeight = float64(len(titleLines)) * np.TitleFontSize * 1.5 // 1.5 spacing
 			// Reset font
 			dc.LoadFontFace(np.FontPath, np.FontSize)
@@ -224,6 +229,65 @@ func (np *NovelProcessor) WrapText(text string, maxWidth float64, dc *gg.Context
 	return lines
 }
 
+// WrapTitle handles smart wrapping for titles, preferring breaks after punctuation
+func (np *NovelProcessor) WrapTitle(text string, maxWidth float64, dc *gg.Context) []string {
+	var lines []string
+	var currentLine []rune
+	
+	runes := []rune(text)
+	
+	// Punctuation characters to prefer breaking after
+	punctuations := "，。！？；：、,.!?;: "
+
+	isPunctuation := func(r rune) bool {
+		return strings.ContainsRune(punctuations, r)
+	}
+
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		currentLine = append(currentLine, r)
+		
+		// Check width
+		lineStr := string(currentLine)
+		w, _ := dc.MeasureString(lineStr)
+		
+		if w > maxWidth {
+			// Line is too long. We need to split.
+			// Look back for punctuation in currentLine (excluding the very last char which caused overflow)
+			splitIdx := -1
+			// Search backwards from the second to last character
+			for j := len(currentLine) - 2; j >= 0; j-- {
+				if isPunctuation(currentLine[j]) {
+					splitIdx = j + 1 // Include punctuation in the line
+					break
+				}
+			}
+			
+			if splitIdx != -1 {
+				// Found punctuation, split there
+				lines = append(lines, string(currentLine[:splitIdx]))
+				// Remaining chars become start of next line
+				currentLine = currentLine[splitIdx:]
+			} else {
+				// No punctuation found, hard split
+				// Split at len(currentLine)-1 (exclude r which caused overflow)
+				if len(currentLine) > 1 {
+					lines = append(lines, string(currentLine[:len(currentLine)-1]))
+					currentLine = []rune{r}
+				} else {
+					// Single char is too wide? Unlikely, but just add it.
+					lines = append(lines, string(currentLine))
+					currentLine = []rune{}
+				}
+			}
+		}
+	}
+	if len(currentLine) > 0 {
+		lines = append(lines, string(currentLine))
+	}
+	return lines
+}
+
 func (np *NovelProcessor) GetPageImage(pageIndex int) (image.Image, error) {
 	if pageIndex < 0 || pageIndex >= len(np.Pages) {
 		return nil, fmt.Errorf("index out of bounds")
@@ -247,14 +311,16 @@ func (np *NovelProcessor) GetPageImage(pageIndex int) (image.Image, error) {
 	// Draw Title on First Page
 	if pageIndex == 0 && np.Title != "" {
 		if err := dc.LoadFontFace(np.FontPath, np.TitleFontSize); err == nil {
-			titleLines := dc.WordWrap(np.Title, float64(np.Width)-np.PaddingLeft-np.PaddingRight)
+			titleLines := np.WrapTitle(np.Title, float64(np.Width)-np.PaddingLeft-np.PaddingRight, dc)
 			titleLineHeight := np.TitleFontSize * 1.5
 			
 			// Draw title centered? Or left?
 			// Let's do Left aligned as per regular text but maybe Bold if font supported (we only have one font file though)
 			
+			titleY := np.PaddingTop + np.TitleFontSize
 			for _, line := range titleLines {
-				dc.DrawString(line, np.PaddingLeft, np.PaddingTop+np.TitleFontSize) // Adjust baseline
+				dc.DrawString(line, np.PaddingLeft, titleY)
+				titleY += titleLineHeight
 				y += titleLineHeight
 			}
 			y += np.FontSize // Extra gap

@@ -26,6 +26,7 @@ type NovelApp struct {
 	PrevBtn       *walk.PushButton
 	NextBtn       *walk.PushButton
 	EditBtn       *walk.PushButton
+	ResolutionCB  *walk.ComboBox
 	
 	// State
 	IsEditing bool
@@ -36,9 +37,11 @@ func NewNovelApp() *NovelApp {
 	
 	// Try to load font
 	fonts := []string{
-		"C:\\Windows\\Fonts\\simhei.ttf",
+		"C:\\Windows\\Fonts\\simkai.ttf", // KaiTi (楷体) - More elegant/xiuqi
+		"C:\\Windows\\Fonts\\simfang.ttf", // FangSong (仿宋)
 		"C:\\Windows\\Fonts\\msyh.ttc",
 		"C:\\Windows\\Fonts\\msyh.ttf",
+		"C:\\Windows\\Fonts\\simhei.ttf",
 		"C:\\Windows\\Fonts\\arial.ttf",
 	}
 	if err := processor.LoadFont(fonts); err != nil {
@@ -51,11 +54,17 @@ func NewNovelApp() *NovelApp {
 }
 
 func (app *NovelApp) Run() {
+	icon, err := walk.NewIconFromFile("icon.ico")
+	if err != nil {
+		fmt.Println("Warning: Failed to load icon:", err)
+	}
+
 	if _, err := (MainWindow{
 		AssignTo: &app.MainWindow, // Assign directly to prevent nil panic in handlers
-		Title:    "Novel Reader",
+		Title:    "灼见阅读",
+		Icon:     icon,
 		Size:     Size{Width: 1200, Height: 900},
-		Layout:   HBox{MarginsZero: true, SpacingZero: true}, // Remove gaps for cleaner look
+		Layout:   HBox{MarginsZero: true, SpacingZero: true}, // Remove gaps for cleaner look 
 		Children: []Widget{
 			// Sidebar (Fixed width, Left aligned)
 			Composite{
@@ -134,7 +143,7 @@ func (app *NovelApp) createNovelView() {
 					ImageView{
 						AssignTo: &app.ImageView,
 						Mode:     ImageViewModeZoom, 
-						MinSize:  Size{Width: 400, Height: 600}, 
+						MinSize:  Size{Width: 367, Height: 638}, // Half of 734x1276 for display
 					},
 					TextEdit{
 						AssignTo:  &app.TextEdit,
@@ -148,6 +157,14 @@ func (app *NovelApp) createNovelView() {
 				Layout: VBox{Margins: Margins{Left: 10}}, // Add left margin
 				MaxSize: Size{Width: 150},
 				Children: []Widget{
+					Label{Text: "分辨率:"},
+					ComboBox{
+						AssignTo:      &app.ResolutionCB,
+						Model:         []string{"734x1276", "1080x1440"},
+						CurrentIndex:  0, // Default 734x1276
+						OnCurrentIndexChanged: app.handleResolutionChange,
+					},
+					VSpacer{Size: 10},
 					Label{
 						AssignTo: &app.PageLabel,
 						Text:     "Page: 0/0",
@@ -202,6 +219,51 @@ func (app *NovelApp) createNovelView() {
 	}
 }
 
+func (app *NovelApp) handleResolutionChange() {
+	if app.ResolutionCB == nil || app.Processor == nil {
+		return
+	}
+	
+	idx := app.ResolutionCB.CurrentIndex()
+	switch idx {
+	case 0: // 734x1276
+		app.Processor.Width = 734
+		app.Processor.Height = 1276
+		app.Processor.FontSize = 32
+		app.Processor.TitleFontSize = 48
+		app.Processor.PaddingLeft = 50
+		app.Processor.PaddingRight = 50
+		app.Processor.PaddingTop = 100
+		app.Processor.PaddingBottom = 30
+		
+		// Update ImageView size
+		if app.ImageView != nil {
+			app.ImageView.SetMinMaxSize(walk.Size{Width: 367, Height: 638}, walk.Size{})
+		}
+		
+	case 1: // 1080x1440
+		app.Processor.Width = 1080
+		app.Processor.Height = 1440
+		app.Processor.FontSize = 48
+		app.Processor.TitleFontSize = 72
+		app.Processor.PaddingLeft = 80
+		app.Processor.PaddingRight = 80
+		app.Processor.PaddingTop = 150
+		app.Processor.PaddingBottom = 50
+		
+		// Update ImageView size
+		if app.ImageView != nil {
+			app.ImageView.SetMinMaxSize(walk.Size{Width: 540, Height: 720}, walk.Size{})
+		}
+	}
+	
+	// Repaginate and update view
+	if err := app.Processor.Paginate(); err != nil {
+		fmt.Println("Error repaginating:", err)
+	}
+	app.updateReadingView()
+}
+
 func (app *NovelApp) updateReadingView() {
 	if app.Processor.TotalPages == 0 {
 		if app.PageLabel != nil {
@@ -243,15 +305,23 @@ func (app *NovelApp) handleImport() {
 		fmt.Println("MainWindow is nil")
 		return
 	}
+	
+	// If currently editing, switch back to view mode first
+	if app.IsEditing {
+		app.toggleEdit()
+	}
 
 	var dlg *walk.Dialog
 	var urlTE *walk.TextEdit
 	var titleTE *walk.TextEdit
 	
+	icon, _ := walk.NewIconFromFile("icon.ico")
+	
 	Dialog{
 		AssignTo: &dlg,
 		Title:    "导入小说",
-		MinSize:  Size{Width: 500, Height: 350},
+		Icon:     icon,
+		MinSize:  Size{Width: 500, Height: 250}, // Reduced height
 		Layout:   VBox{},
 		Children: []Widget{
 			Label{Text: "小说标题 (必填):"},
@@ -260,7 +330,8 @@ func (app *NovelApp) handleImport() {
 			PushButton{
 				Text: "从文件导入",
 				OnClicked: func() {
-					if titleTE.Text() == "" {
+					title := titleTE.Text()
+					if title == "" {
 						walk.MsgBox(dlg, "错误", "标题不能为空", walk.MsgBoxIconError)
 						return
 					}
@@ -271,7 +342,7 @@ func (app *NovelApp) handleImport() {
 					if ok, err := dlgFile.ShowOpen(app.MainWindow); err != nil {
 						return
 					} else if ok {
-						app.Processor.Title = titleTE.Text()
+						app.Processor.Title = title
 						if err := app.Processor.LoadFromFile(dlgFile.FilePath); err != nil {
 							walk.MsgBox(app.MainWindow, "错误", err.Error(), walk.MsgBoxIconError)
 						} else {
@@ -284,25 +355,17 @@ func (app *NovelApp) handleImport() {
 			Label{Text: "或者输入链接 (支持长链接):"},
 			TextEdit{
 				AssignTo: &urlTE,
-				VScroll:  true, // Enable vertical scroll
-				MinSize:  Size{Height: 100},
+				MinSize:  Size{Height: 40}, // Smaller URL box
 			},
 			Composite{
 				Layout: HBox{},
 				Children: []Widget{
-					PushButton{
-						Text: "从剪贴板粘贴",
-						OnClicked: func() {
-							if text, err := walk.Clipboard().Text(); err == nil {
-								urlTE.SetText(text)
-							}
-						},
-					},
 					HSpacer{},
 					PushButton{
 						Text: "从链接导入",
 						OnClicked: func() {
-							if titleTE.Text() == "" {
+							title := titleTE.Text()
+							if title == "" {
 								walk.MsgBox(dlg, "错误", "标题不能为空", walk.MsgBoxIconError)
 								return
 							}
@@ -310,7 +373,7 @@ func (app *NovelApp) handleImport() {
 							url := urlTE.Text()
 							if url != "" {
 								dlg.Close(walk.DlgCmdOK)
-								app.Processor.Title = titleTE.Text()
+								app.Processor.Title = title
 								if err := app.Processor.LoadFromURL(url); err != nil {
 									walk.MsgBox(app.MainWindow, "错误", err.Error(), walk.MsgBoxIconError)
 								} else {
