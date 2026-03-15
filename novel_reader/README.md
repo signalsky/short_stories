@@ -28,10 +28,20 @@ Built with Go and Walk (Windows App Library Kit).
 
 ## Build
 To rebuild the application (Requires Go installed):
+
+**Standard Build:**
 ```bash
 go mod tidy
 go build -o novel_reader.exe
 ```
+
+**Optimized Build (Smaller size, no console window):**
+```bash
+go mod tidy
+go build -ldflags "-s -w -H windowsgui" -o novel_reader.exe
+```
+* `-s -w`: Strip debug information and symbol table to reduce file size.
+* `-H windowsgui`: Hide the command prompt window when running the application.
 
 ## Note
 - The `novel_reader.exe.manifest` file enables modern Windows visual styles. Keep it in the same directory as the executable.

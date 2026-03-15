@@ -2,7 +2,13 @@ package ui
 
 import (
 	"fmt"
+	"image"
+	"image/png"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"unicode/utf8"
 
 	"novel_reader/novel"
@@ -27,6 +33,17 @@ type NovelApp struct {
 	NextBtn       *walk.PushButton
 	EditBtn       *walk.PushButton
 	ResolutionCB  *walk.ComboBox
+	
+	// Cover View
+	CoverComposite    *walk.Composite
+	CoverTitleInput   *walk.LineEdit
+	CoverTitleSizeInput *walk.LineEdit
+	CoverContentInput *walk.TextEdit
+	CoverContentSizeInput *walk.LineEdit
+	CoverImageView    *walk.ImageView
+	LastCoverImage    image.Image
+	CoverSelectedImage string
+	CoverThumbComposites []*walk.Composite
 	
 	// State
 	IsEditing bool
@@ -80,6 +97,12 @@ func (app *NovelApp) Run() {
 						},
 					},
 					PushButton{
+						Text: "首图生成",
+						OnClicked: func() {
+							app.showCoverView()
+						},
+					},
+					PushButton{
 						Text: "其他",
 						OnClicked: func() {
 							app.showPlaceholder()
@@ -114,9 +137,15 @@ func (app *NovelApp) showPlaceholder() {
 	if app.NovelComposite != nil {
 		app.NovelComposite.SetVisible(false)
 	}
+	if app.CoverComposite != nil {
+		app.CoverComposite.SetVisible(false)
+	}
 }
 
 func (app *NovelApp) showNovelView() {
+	if app.CoverComposite != nil {
+		app.CoverComposite.SetVisible(false)
+	}
 	if app.NovelComposite == nil {
 		app.createNovelView()
 	} else {
@@ -472,5 +501,301 @@ func (app *NovelApp) toggleEdit() {
 		app.TextEdit.SetText(app.Processor.Content)
 		app.ImageView.SetVisible(false)
 		app.TextEdit.SetVisible(true)
+	}
+}
+
+func (app *NovelApp) showCoverView() {
+	if app.NovelComposite != nil {
+		app.NovelComposite.SetVisible(false)
+	}
+	if app.CoverComposite == nil {
+		app.createCoverView()
+	} else {
+		app.CoverComposite.SetVisible(true)
+	}
+}
+
+func (app *NovelApp) createCoverView() {
+	if app.ContentComposite == nil {
+		return
+	}
+
+	// List images in relative path "首图"
+	imageDir := "首图"
+	var imageFiles []string
+	entries, err := os.ReadDir(imageDir)
+	if err == nil {
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				ext := filepath.Ext(entry.Name())
+				if ext == ".png" || ext == ".jpg" {
+					imageFiles = append(imageFiles, entry.Name())
+				}
+			}
+		}
+	} else {
+		// Fallback to absolute path if relative fails (e.g. running from different dir)
+		imageDir = "e:\\worksapce\\short_stories\\novel_reader\\首图"
+		entries, err = os.ReadDir(imageDir)
+		if err == nil {
+			for _, entry := range entries {
+				if !entry.IsDir() {
+					ext := filepath.Ext(entry.Name())
+					if ext == ".png" || ext == ".jpg" {
+						imageFiles = append(imageFiles, entry.Name())
+					}
+				}
+			}
+		} else {
+			fmt.Println("Error reading image directory:", err)
+		}
+	}
+	
+	// Prepare thumbnail widgets
+	app.CoverThumbComposites = make([]*walk.Composite, len(imageFiles))
+	var thumbWidgets []Widget
+	
+	for i, file := range imageFiles {
+		idx := i
+		name := file
+		fullPath := filepath.Join(imageDir, name)
+		
+		// Determine initial background color
+		bgColor := walk.RGB(240, 240, 240)
+		if i == 0 {
+			bgColor = walk.RGB(173, 216, 230) // Selected
+			app.CoverSelectedImage = name
+		}
+		
+		thumbWidgets = append(thumbWidgets, Composite{
+			AssignTo: &app.CoverThumbComposites[idx],
+			Layout: VBox{Margins: Margins{Left: 5, Top: 5, Right: 5, Bottom: 5}},
+			MaxSize: Size{Width: 100, Height: 140},
+			Background: SolidColorBrush{Color: bgColor},
+			OnMouseDown: func(x, y int, button walk.MouseButton) {
+				app.selectCoverImage(name)
+				app.updateCoverSelectionUI(idx)
+			},
+			Children: []Widget{
+				ImageView{
+					Image: fullPath,
+					Mode: ImageViewModeZoom,
+					MinSize: Size{Width: 90, Height: 120},
+					MaxSize: Size{Width: 90, Height: 120},
+					OnMouseDown: func(x, y int, button walk.MouseButton) {
+						app.selectCoverImage(name)
+						app.updateCoverSelectionUI(idx)
+					},
+				},
+			},
+		})
+	}
+	
+	defaultContent := "1. 全文9900+字，已完结\r\n2. 下单秒发货，默认链接\r\n3. 提取链接：对话框内、物流信息处\r\n4. 电子书籍，下单后恕不退换"
+
+	builder := NewBuilder(app.ContentComposite)
+	
+	err = Composite{
+		AssignTo: &app.CoverComposite,
+		Layout:   HBox{Margins: Margins{Left: 10, Top: 10, Right: 10, Bottom: 10}},
+		Children: []Widget{
+			// Left Panel (Input & Preview)
+			Composite{
+				Layout: VBox{MarginsZero: true},
+				Children: []Widget{
+					// Block 1: Image Selection
+					Label{Text: "选择图像 (点击选中):"},
+					ScrollView{
+						MaxSize: Size{Height: 160},
+						Layout:  Flow{Margins: Margins{Left: 5, Top: 5, Right: 5, Bottom: 5}, Spacing: 10},
+						Children: thumbWidgets,
+					},
+					
+					// Block 2: Title Input
+					Composite{
+						Layout: HBox{MarginsZero: true},
+						Children: []Widget{
+							Label{Text: "标题:"},
+							LineEdit{
+								AssignTo: &app.CoverTitleInput,
+								Text:     "看文须知",
+							},
+							Label{Text: "字号:"},
+							LineEdit{
+								AssignTo: &app.CoverTitleSizeInput,
+								Text:     "60",
+								MaxSize:  Size{Width: 40},
+							},
+						},
+					},
+					
+					// Block 3: Content Input
+					Composite{
+						Layout: HBox{MarginsZero: true},
+						Children: []Widget{
+							Label{Text: "内容:"},
+							HSpacer{},
+							Label{Text: "字号:"},
+							LineEdit{
+								AssignTo: &app.CoverContentSizeInput,
+								Text:     "40",
+								MaxSize:  Size{Width: 40},
+							},
+						},
+					},
+					TextEdit{
+						AssignTo: &app.CoverContentInput,
+						Text:     defaultContent,
+						MinSize:  Size{Height: 100},
+					},
+					
+					// Block 4: Processed Image Display
+					VSpacer{Size: 10},
+					Label{Text: "预览:"},
+					ImageView{
+						AssignTo: &app.CoverImageView,
+						Mode:     ImageViewModeZoom,
+						MinSize:  Size{Width: 300, Height: 400}, 
+					},
+				},
+			},
+			
+			// Right Panel (Buttons)
+			Composite{
+				Layout:  VBox{Margins: Margins{Left: 10}},
+				MaxSize: Size{Width: 150},
+				Children: []Widget{
+					PushButton{
+						Text:      "生成",
+						OnClicked: app.handleCoverGenerate,
+					},
+					PushButton{
+						Text:      "复制",
+						OnClicked: app.handleCoverCopy,
+					},
+					VSpacer{},
+				},
+			},
+		},
+	}.Create(builder)
+	
+	if err != nil {
+		fmt.Println("Error creating cover view:", err)
+	}
+}
+
+func (app *NovelApp) selectCoverImage(name string) {
+	app.CoverSelectedImage = name
+	
+	// Need to find the index of this name in the image list to update the corresponding composite
+	// But we don't store the image list in app struct.
+	// We can store the image names in the app struct or just rely on the order if we don't change it.
+	// A better way: The closure for OnMouseDown already knows the index if we capture it.
+	// So let's pass index to selectCoverImage or handle it in the closure.
+}
+
+func (app *NovelApp) updateCoverSelectionUI(selectedIndex int) {
+	for i, cmp := range app.CoverThumbComposites {
+		if cmp == nil { continue }
+		
+		if i == selectedIndex {
+			// Selected: Blue border/background
+			b, _ := walk.NewSolidColorBrush(walk.RGB(173, 216, 230)) // Light Blue
+			cmp.SetBackground(b)
+		} else {
+			// Unselected: Default
+			b, _ := walk.NewSolidColorBrush(walk.RGB(240, 240, 240))
+			cmp.SetBackground(b)
+		}
+	}
+}
+
+func (app *NovelApp) handleCoverGenerate() {
+	if app.CoverTitleInput == nil || app.CoverContentInput == nil {
+		return
+	}
+	
+	// Get inputs
+	imageName := app.CoverSelectedImage
+	if imageName == "" {
+		walk.MsgBox(app.MainWindow, "错误", "请选择图片", walk.MsgBoxIconError)
+		return
+	}
+	
+	basePath := filepath.Join("e:\\worksapce\\short_stories\\novel_reader\\首图", imageName)
+	
+	// If relative path exists, use it
+	if _, err := os.Stat(filepath.Join("首图", imageName)); err == nil {
+		basePath = filepath.Join("首图", imageName)
+	}
+	
+	title := app.CoverTitleInput.Text()
+	content := app.CoverContentInput.Text()
+	
+	// Parse font sizes
+	titleSize, err := strconv.ParseFloat(app.CoverTitleSizeInput.Text(), 64)
+	if err != nil || titleSize <= 0 {
+		titleSize = 60
+	}
+	
+	contentSize, err := strconv.ParseFloat(app.CoverContentSizeInput.Text(), 64)
+	if err != nil || contentSize <= 0 {
+		contentSize = 40
+	}
+	
+	// Generate
+	gen := novel.NewCoverGenerator(app.Processor.FontPath)
+	img, err := gen.GenerateCover(basePath, title, content, titleSize, contentSize)
+	if err != nil {
+		walk.MsgBox(app.MainWindow, "错误", "生成失败: "+err.Error(), walk.MsgBoxIconError)
+		return
+	}
+	
+	// Display
+	bitmap, err := walk.NewBitmapFromImage(img)
+	if err != nil {
+		fmt.Println("Error creating bitmap:", err)
+		return
+	}
+	app.CoverImageView.SetImage(bitmap)
+	
+	// Store image for copying
+	app.LastCoverImage = img
+}
+
+func (app *NovelApp) handleCoverCopy() {
+	if app.LastCoverImage == nil {
+		walk.MsgBox(app.MainWindow, "错误", "请先生成图片", walk.MsgBoxIconError)
+		return
+	}
+	
+	// Save to temp file to copy to clipboard (PowerShell method requires file)
+	// Or use a clipboard library. Since we used PowerShell before, let's stick to it but use a temp file.
+	tempDir := os.TempDir()
+	tempFile := filepath.Join(tempDir, "novel_reader_cover_temp.png")
+	
+	// Save image to temp file
+	f, err := os.Create(tempFile)
+	if err != nil {
+		walk.MsgBox(app.MainWindow, "错误", "无法创建临时文件: "+err.Error(), walk.MsgBoxIconError)
+		return
+	}
+	defer f.Close()
+	
+	if err := png.Encode(f, app.LastCoverImage); err != nil {
+		walk.MsgBox(app.MainWindow, "错误", "无法保存临时图片: "+err.Error(), walk.MsgBoxIconError)
+		return
+	}
+	f.Close() // Close before using in PowerShell
+	
+	path := strings.ReplaceAll(tempFile, "'", "''")
+	
+	// Use PowerShell to copy image to clipboard
+	cmd := exec.Command("powershell", "-WindowStyle", "Hidden", "-Command", "Add-Type -AssemblyName System.Windows.Forms; $img = [System.Drawing.Image]::FromFile('"+path+"'); [System.Windows.Forms.Clipboard]::SetImage($img); $img.Dispose()")
+	
+	if err := cmd.Run(); err != nil {
+		walk.MsgBox(app.MainWindow, "错误", "复制失败: "+err.Error(), walk.MsgBoxIconError)
+	} else {
+		walk.MsgBox(app.MainWindow, "成功", "图片已复制到剪贴板", walk.MsgBoxIconInformation)
 	}
 }
