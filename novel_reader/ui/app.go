@@ -1,14 +1,22 @@
 package ui
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"image"
 	"image/png"
+	"io"
+	"mime/multipart"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"novel_reader/novel"
@@ -45,9 +53,18 @@ type NovelApp struct {
 	CoverSelectedImage string
 	CoverThumbComposites []*walk.Composite
 	
+	// Downloader View
+	DownloaderComposite *walk.Composite
+	DownloadUrlInput    *walk.LineEdit
+	DownloadLog         *walk.TextEdit
+	LastDownloadDir     string
+
 	// State
 	IsEditing bool
 }
+
+const ocrBeginMarker = "[OCR_PARSE_BEGIN]"
+const ocrEndMarker = "[OCR_PARSE_END]"
 
 func NewNovelApp() *NovelApp {
 	processor := novel.NewNovelProcessor()
@@ -103,6 +120,12 @@ func (app *NovelApp) Run() {
 						},
 					},
 					PushButton{
+						Text: "下载文章",
+						OnClicked: func() {
+							app.showDownloaderView()
+						},
+					},
+					PushButton{
 						Text: "其他",
 						OnClicked: func() {
 							app.showPlaceholder()
@@ -140,11 +163,17 @@ func (app *NovelApp) showPlaceholder() {
 	if app.CoverComposite != nil {
 		app.CoverComposite.SetVisible(false)
 	}
+	if app.DownloaderComposite != nil {
+		app.DownloaderComposite.SetVisible(false)
+	}
 }
 
 func (app *NovelApp) showNovelView() {
 	if app.CoverComposite != nil {
 		app.CoverComposite.SetVisible(false)
+	}
+	if app.DownloaderComposite != nil {
+		app.DownloaderComposite.SetVisible(false)
 	}
 	if app.NovelComposite == nil {
 		app.createNovelView()
@@ -152,6 +181,360 @@ func (app *NovelApp) showNovelView() {
 		app.NovelComposite.SetVisible(true)
 	}
 	app.updateReadingView()
+}
+
+func (app *NovelApp) showDownloaderView() {
+	if app.NovelComposite != nil {
+		app.NovelComposite.SetVisible(false)
+	}
+	if app.CoverComposite != nil {
+		app.CoverComposite.SetVisible(false)
+	}
+	if app.DownloaderComposite == nil {
+		app.createDownloaderView()
+	} else {
+		app.DownloaderComposite.SetVisible(true)
+	}
+}
+
+func (app *NovelApp) createDownloaderView() {
+	if app.ContentComposite == nil {
+		return
+	}
+
+	builder := NewBuilder(app.ContentComposite)
+	
+	Composite{
+		AssignTo: &app.DownloaderComposite,
+		Layout:   HBox{Margins: Margins{Left: 10, Top: 10, Right: 10, Bottom: 10}},
+		Children: []Widget{
+			Composite{
+				Layout: VBox{Margins: Margins{Left: 10, Top: 10, Right: 10, Bottom: 10}},
+				Children: []Widget{
+					Label{
+						Text: "小红书文章链接:",
+						Font: Font{PointSize: 12, Bold: true},
+					},
+					LineEdit{
+						AssignTo: &app.DownloadUrlInput,
+						MinSize:  Size{Height: 30},
+					},
+					VSpacer{Size: 10},
+					Label{Text: "下载日志:"},
+					TextEdit{
+						AssignTo: &app.DownloadLog,
+						ReadOnly: true,
+						VScroll:  true,
+					},
+				},
+			},
+			Composite{
+				Layout:  VBox{Margins: Margins{Left: 10}},
+				MaxSize: Size{Width: 150},
+				Children: []Widget{
+					PushButton{
+						Text:      "开始下载",
+						OnClicked: app.handleDownload,
+					},
+					PushButton{
+						Text:      "解析文字",
+						OnClicked: app.handleParseOCR,
+					},
+					PushButton{
+						Text: "清空日志",
+						OnClicked: func() {
+							if app.DownloadLog != nil {
+								app.DownloadLog.SetText("")
+							}
+						},
+					},
+					VSpacer{},
+				},
+			},
+		},
+	}.Create(builder)
+}
+
+func (app *NovelApp) handleDownload() {
+	url := app.DownloadUrlInput.Text()
+	if url == "" {
+		walk.MsgBox(app.MainWindow, "错误", "请输入链接", walk.MsgBoxIconError)
+		return
+	}
+	
+	app.log("开始下载: " + url)
+	
+	go func() {
+		dir, err := novel.DownloadXHSArticle(url)
+		
+		app.MainWindow.Synchronize(func() {
+			if err != nil {
+				app.log("下载失败: " + err.Error())
+				walk.MsgBox(app.MainWindow, "错误", "下载失败: "+err.Error(), walk.MsgBoxIconError)
+			} else {
+				app.log("下载成功! 保存至: " + dir)
+				app.LastDownloadDir = dir
+				walk.MsgBox(app.MainWindow, "成功", "下载完成\n保存目录: "+dir, walk.MsgBoxIconInformation)
+				app.DownloadUrlInput.SetText("")
+			}
+		})
+	}()
+}
+
+func (app *NovelApp) log(msg string) {
+	if app.DownloadLog != nil {
+		app.DownloadLog.AppendText(msg + "\r\n")
+	}
+}
+
+func (app *NovelApp) handleParseOCR() {
+	if app.LastDownloadDir == "" {
+		walk.MsgBox(app.MainWindow, "提示", "请先下载文章", walk.MsgBoxIconInformation)
+		return
+	}
+
+	textFile, err := findArticleTextFile(app.LastDownloadDir)
+	if err != nil {
+		walk.MsgBox(app.MainWindow, "错误", "读取目录失败: "+err.Error(), walk.MsgBoxIconError)
+		return
+	}
+
+	parsed, err := hasOCRSection(textFile)
+	if err != nil {
+		walk.MsgBox(app.MainWindow, "错误", "读取文本失败: "+err.Error(), walk.MsgBoxIconError)
+		return
+	}
+
+	if parsed {
+		ret := walk.MsgBox(app.MainWindow, "重复解析", "检测到已解析内容，是否覆盖重写？", walk.MsgBoxYesNo|walk.MsgBoxIconQuestion)
+		if ret != walk.DlgCmdYes {
+			return
+		}
+	}
+
+	app.log("开始解析图片文字: " + app.LastDownloadDir)
+
+	go func(dir, txtPath string) {
+		if !isOCRServiceRunning() {
+			app.MainWindow.Synchronize(func() {
+				app.log("ocr服务没开启")
+				walk.MsgBox(app.MainWindow, "错误", "ocr服务没开启", walk.MsgBoxIconError)
+			})
+			return
+		}
+
+		parsedText, imageCount, err := parseOCRFromImages(dir, func(current, total int, imageName string) {
+			app.MainWindow.Synchronize(func() {
+				app.log(fmt.Sprintf("解析进度: %d/%d (%s)", current, total, imageName))
+			})
+		})
+		if err != nil {
+			app.MainWindow.Synchronize(func() {
+				app.log("解析失败: " + err.Error())
+				walk.MsgBox(app.MainWindow, "错误", "解析失败: "+err.Error(), walk.MsgBoxIconError)
+			})
+			return
+		}
+
+		if err := writeOCRSection(txtPath, parsedText); err != nil {
+			app.MainWindow.Synchronize(func() {
+				app.log("写入失败: " + err.Error())
+				walk.MsgBox(app.MainWindow, "错误", "写入失败: "+err.Error(), walk.MsgBoxIconError)
+			})
+			return
+		}
+
+		app.MainWindow.Synchronize(func() {
+			app.log(fmt.Sprintf("解析完成，共处理%d张图片", imageCount))
+			app.log("文字已写入: " + txtPath)
+			walk.MsgBox(app.MainWindow, "成功", "解析完成，文字已写入txt", walk.MsgBoxIconInformation)
+		})
+	}(app.LastDownloadDir, textFile)
+}
+
+func isOCRServiceRunning() bool {
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get("http://127.0.0.1:8000/docs")
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode >= 200 && resp.StatusCode < 500
+}
+
+func findArticleTextFile(dir string) (string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", err
+	}
+
+	var txtFiles []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if strings.EqualFold(filepath.Ext(entry.Name()), ".txt") {
+			txtFiles = append(txtFiles, entry.Name())
+		}
+	}
+
+	if len(txtFiles) > 0 {
+		sort.Strings(txtFiles)
+		return filepath.Join(dir, txtFiles[0]), nil
+	}
+
+	return filepath.Join(dir, filepath.Base(dir)+".txt"), nil
+}
+
+func hasOCRSection(path string) (bool, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	text := string(content)
+	return strings.Contains(text, ocrBeginMarker) && strings.Contains(text, ocrEndMarker), nil
+}
+
+func parseOCRFromImages(dir string, onProgress func(current, total int, imageName string)) (string, int, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", 0, err
+	}
+
+	var images []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		ext := strings.ToLower(filepath.Ext(entry.Name()))
+		if ext == ".jpg" || ext == ".jpeg" || ext == ".png" {
+			images = append(images, entry.Name())
+		}
+	}
+
+	if len(images) == 0 {
+		return "", 0, fmt.Errorf("未找到可解析图片")
+	}
+
+	sort.Slice(images, func(i, j int) bool {
+		aBase := strings.TrimSuffix(images[i], filepath.Ext(images[i]))
+		bBase := strings.TrimSuffix(images[j], filepath.Ext(images[j]))
+		aNum, aErr := strconv.Atoi(aBase)
+		bNum, bErr := strconv.Atoi(bBase)
+		if aErr == nil && bErr == nil {
+			return aNum < bNum
+		}
+		if aErr == nil {
+			return true
+		}
+		if bErr == nil {
+			return false
+		}
+		return strings.ToLower(images[i]) < strings.ToLower(images[j])
+	})
+
+	var builder strings.Builder
+	total := len(images)
+	for i, imageName := range images {
+		if onProgress != nil {
+			onProgress(i+1, total, imageName)
+		}
+		imagePath := filepath.Join(dir, imageName)
+		text, err := requestOCRText(imagePath)
+		if err != nil {
+			return "", 0, fmt.Errorf("%s 解析失败: %v", imageName, err)
+		}
+
+		builder.WriteString("[" + imageName + "]\r\n")
+		if strings.TrimSpace(text) == "" {
+			builder.WriteString("(空结果)\r\n\r\n")
+			continue
+		}
+		builder.WriteString(text + "\r\n\r\n")
+	}
+
+	return strings.TrimSpace(builder.String()), len(images), nil
+}
+
+func requestOCRText(imagePath string) (string, error) {
+	file, err := os.Open(imagePath)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", filepath.Base(imagePath))
+	if err != nil {
+		return "", err
+	}
+	if _, err := io.Copy(part, file); err != nil {
+		return "", err
+	}
+	if err := writer.Close(); err != nil {
+		return "", err
+	}
+
+	req, err := http.NewRequest("POST", "http://127.0.0.1:8000/ocr", &body)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("OCR请求失败(%d): %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+
+	var result struct {
+		Status   string `json:"status"`
+		FullText string `json:"full_text"`
+		Detail   string `json:"detail"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", err
+	}
+
+	if result.Status != "" && result.Status != "success" {
+		if result.Detail != "" {
+			return "", fmt.Errorf(result.Detail)
+		}
+		return "", fmt.Errorf("OCR服务返回失败状态")
+	}
+
+	return strings.TrimSpace(result.FullText), nil
+}
+
+func writeOCRSection(path, parsedText string) error {
+	var current string
+	content, err := os.ReadFile(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+	} else {
+		current = string(content)
+	}
+
+	re := regexp.MustCompile(`(?s)\r?\n?\[OCR_PARSE_BEGIN\].*?\[OCR_PARSE_END\]\r?\n?`)
+	cleaned := strings.TrimSpace(re.ReplaceAllString(current, ""))
+
+	section := ocrBeginMarker + "\r\n" + time.Now().Format("2006-01-02 15:04:05") + "\r\n" + parsedText + "\r\n" + ocrEndMarker
+	if cleaned == "" {
+		return os.WriteFile(path, []byte(section+"\r\n"), 0644)
+	}
+	return os.WriteFile(path, []byte(cleaned+"\r\n\r\n"+section+"\r\n"), 0644)
 }
 
 func (app *NovelApp) createNovelView() {
@@ -507,6 +890,9 @@ func (app *NovelApp) toggleEdit() {
 func (app *NovelApp) showCoverView() {
 	if app.NovelComposite != nil {
 		app.NovelComposite.SetVisible(false)
+	}
+	if app.DownloaderComposite != nil {
+		app.DownloaderComposite.SetVisible(false)
 	}
 	if app.CoverComposite == nil {
 		app.createCoverView()

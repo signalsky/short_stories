@@ -38,10 +38,12 @@ go build -o novel_reader.exe
 **Optimized Build (Smaller size, no console window):**
 ```bash
 go mod tidy
-go build -ldflags "-s -w -H windowsgui" -o novel_reader.exe
+go build -trimpath -buildvcs=false -ldflags "-s -w -H=windowsgui" -o novel_reader.exe
 ```
 * `-s -w`: Strip debug information and symbol table to reduce file size.
-* `-H windowsgui`: Hide the command prompt window when running the application.
+* `-H=windowsgui`: Hide the command prompt window when running the application.
+* `-trimpath`: Remove local absolute paths from build output.
+* `-buildvcs=false`: Skip VCS metadata embedding for slightly cleaner/reproducible builds.
 
 ## Note
 - The `novel_reader.exe.manifest` file enables modern Windows visual styles. Keep it in the same directory as the executable.
