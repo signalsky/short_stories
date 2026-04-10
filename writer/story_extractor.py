@@ -312,8 +312,8 @@ def extract_storyline():
 
 【重要硬性要求】：
 1. 必须且只能输出合法的 JSON 格式，不要包含任何 Markdown 标记（如 ```json ）或额外文本。
-2. 你的切分必须覆盖【全部小说原文】，不能遗漏任何段落，也不能凭空捏造原文。
-3. 你需要在内部切分好每一段原文，统计出当前字数，然后根据你的“调整建议（比例）”直接计算出【目标字数】。
+2. 你的切分必须覆盖【全部小说原文】。
+3. 请在后台先计算出每个场景对应的【当前原文真实字数】，然后根据你的“调整建议（比例）”计算出【目标字数】。由于原文总字数约为 {len(story_content)} 字左右，请确保你切分出的所有场景的【目标字数】总和，也必须在 {len(story_content)} 字左右！绝对不能出现总字数只有几千字的情况！
 4. 返回的 JSON 必须且只能是一个字典，包含一个 "场景切分与建议" 的键。它的值也必须是一个单纯的字典（绝对不要使用列表 list），Key 是场景名，Value 是你计算出的该场景【目标字数】（整数）。
 5. 绝对不要返回“对应情绪”、“切分原文”、“当前字数”、“调整建议”等其他多余字段，只要一个目标字数！
 
@@ -360,6 +360,58 @@ def extract_storyline():
                             final_result["场景切分与建议"] = split_content
             else:
                 print("Failed to extract splitting info.")
+
+        # 6. 计算字数并生成对比结果
+        if "场景切分与建议" in final_result:
+            split_data = final_result["场景切分与建议"]
+            new_split_dict = {}
+            
+            # 处理嵌套的情况
+            if isinstance(split_data, dict) and "场景切分与建议" in split_data:
+                split_data = split_data["场景切分与建议"]
+            
+            # 如果大模型返回的是列表，我们手动将其转换为需要的字典格式
+            if isinstance(split_data, list):
+                for item in split_data:
+                    if isinstance(item, dict):
+                        scene_name = item.get("场景名", "")
+                        target_words = item.get("目标字数", 0)
+                        if scene_name:
+                            new_split_dict[scene_name] = target_words
+            # 如果大模型返回的是字典，但里面包含了复杂的结构，我们也提取出来
+            elif isinstance(split_data, dict):
+                for k, v in split_data.items():
+                    if isinstance(v, dict) and "目标字数" in v:
+                        new_split_dict[k] = v["目标字数"]
+                    elif isinstance(v, (int, str)):
+                        try:
+                            new_split_dict[k] = int(v)
+                        except:
+                            pass
+                            
+            # 替换为纯净的字典
+            if new_split_dict:
+                final_result["场景切分与建议"] = new_split_dict
+            elif isinstance(split_data, str):
+                # 如果是字符串，可能是 JSON 解析失败留下的，尝试强行解析
+                try:
+                    import re
+                    # 尝试用正则找场景名和目标字数
+                    matches = re.findall(r'"场景名"\s*:\s*"([^"]+)"[^\}]+?"目标字数"\s*:\s*(\d+)', split_data)
+                    for scene_name, target_words in matches:
+                        new_split_dict[scene_name] = int(target_words)
+                    
+                    if not new_split_dict:
+                        # 尝试另一种常见的格式 {"场景名": 100}
+                        matches2 = re.findall(r'"([^"]+)"\s*:\s*(\d+)', split_data)
+                        for scene_name, target_words in matches2:
+                            if scene_name != "场景切分与建议":
+                                new_split_dict[scene_name] = int(target_words)
+
+                    if new_split_dict:
+                        final_result["场景切分与建议"] = new_split_dict
+                except:
+                    pass
 
         # 在保存前，递归清理所有值为“无”或“无。”的空场景/情绪
         final_result = remove_empty_values(final_result)
