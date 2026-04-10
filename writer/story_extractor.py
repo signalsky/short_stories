@@ -313,7 +313,7 @@ def extract_storyline():
 【重要硬性要求】：
 1. 必须且只能输出合法的 JSON 格式，不要包含任何 Markdown 标记（如 ```json ）或额外文本。
 2. 你的切分必须覆盖【全部小说原文】。
-3. 请在后台先计算出每个场景对应的【当前原文真实字数】，然后根据你的“调整建议（比例）”计算出【目标字数】。由于原文总字数约为 {len(story_content)} 字左右，请确保你切分出的所有场景的【目标字数】总和，也必须在 {len(story_content)} 字左右！绝对不能出现总字数只有几千字的情况！
+3. 请在后台先计算出每个场景对应的【当前原文真实字数】，然后根据你的“调整建议（比例）”计算出【目标字数】。
 4. 返回的 JSON 必须且只能是一个字典，包含一个 "场景切分与建议" 的键。它的值也必须是一个单纯的字典（绝对不要使用列表 list），Key 是场景名，Value 是你计算出的该场景【目标字数】（整数）。
 5. 绝对不要返回“对应情绪”、“切分原文”、“当前字数”、“调整建议”等其他多余字段，只要一个目标字数！
 
@@ -412,6 +412,21 @@ def extract_storyline():
                         final_result["场景切分与建议"] = new_split_dict
                 except:
                     pass
+            
+            # 增加基于原文长度按比例重新分配字数的逻辑，防止大模型计算出来的总和太少
+            if isinstance(final_result.get("场景切分与建议"), dict):
+                valid_dict = final_result["场景切分与建议"]
+                total_calculated = sum(valid_dict.values())
+                actual_total = len(story_content)
+                
+                # 无论大模型计算的总和是多少，只要它偏离实际字数超过 10%，我们就按比例强制缩放
+                if total_calculated > 0 and (total_calculated < actual_total * 0.9 or total_calculated > actual_total * 1.1):
+                    ratio = actual_total / total_calculated
+                    print(f"LLM target total ({total_calculated}) is deviated from actual total ({actual_total}). Scaling by {ratio:.2f}...")
+                    adjusted_dict = {}
+                    for k, v in valid_dict.items():
+                        adjusted_dict[k] = int(v * ratio)
+                    final_result["场景切分与建议"] = adjusted_dict
 
         # 在保存前，递归清理所有值为“无”或“无。”的空场景/情绪
         final_result = remove_empty_values(final_result)
