@@ -32,27 +32,27 @@ type NovelApp struct {
 	// UI Components
 	ContentComposite *walk.Composite
 	NovelComposite   *walk.Composite
-	
+
 	// Novel View
-	ImageView     *walk.ImageView
-	TextEdit      *walk.TextEdit
-	PageLabel     *walk.Label
-	PrevBtn       *walk.PushButton
-	NextBtn       *walk.PushButton
-	EditBtn       *walk.PushButton
-	ResolutionCB  *walk.ComboBox
-	
+	ImageView    *walk.ImageView
+	TextEdit     *walk.TextEdit
+	PageLabel    *walk.Label
+	PrevBtn      *walk.PushButton
+	NextBtn      *walk.PushButton
+	EditBtn      *walk.PushButton
+	ResolutionCB *walk.ComboBox
+
 	// Cover View
-	CoverComposite    *walk.Composite
-	CoverTitleInput   *walk.LineEdit
-	CoverTitleSizeInput *walk.LineEdit
-	CoverContentInput *walk.TextEdit
+	CoverComposite        *walk.Composite
+	CoverTitleInput       *walk.LineEdit
+	CoverTitleSizeInput   *walk.LineEdit
+	CoverContentInput     *walk.TextEdit
 	CoverContentSizeInput *walk.LineEdit
-	CoverImageView    *walk.ImageView
-	LastCoverImage    image.Image
-	CoverSelectedImage string
-	CoverThumbComposites []*walk.Composite
-	
+	CoverImageView        *walk.ImageView
+	LastCoverImage        image.Image
+	CoverSelectedImage    string
+	CoverThumbComposites  []*walk.Composite
+
 	// Downloader View
 	DownloaderComposite *walk.Composite
 	DownloadUrlInput    *walk.LineEdit
@@ -68,10 +68,10 @@ const ocrEndMarker = "[OCR_PARSE_END]"
 
 func NewNovelApp() *NovelApp {
 	processor := novel.NewNovelProcessor()
-	
+
 	// Try to load font
 	fonts := []string{
-		"C:\\Windows\\Fonts\\simkai.ttf", // KaiTi (楷体) - More elegant/xiuqi
+		"C:\\Windows\\Fonts\\simkai.ttf",  // KaiTi (楷体) - More elegant/xiuqi
 		"C:\\Windows\\Fonts\\simfang.ttf", // FangSong (仿宋)
 		"C:\\Windows\\Fonts\\msyh.ttc",
 		"C:\\Windows\\Fonts\\msyh.ttf",
@@ -98,12 +98,12 @@ func (app *NovelApp) Run() {
 		Title:    "灼见阅读",
 		Icon:     icon,
 		Size:     Size{Width: 1200, Height: 900},
-		Layout:   HBox{MarginsZero: true, SpacingZero: true}, // Remove gaps for cleaner look 
+		Layout:   HBox{MarginsZero: true, SpacingZero: true}, // Remove gaps for cleaner look
 		Children: []Widget{
 			// Sidebar (Fixed width, Left aligned)
 			Composite{
 				Layout:     VBox{Margins: Margins{Left: 10, Top: 10, Right: 10, Bottom: 10}, Spacing: 10},
-				MaxSize:    Size{Width: 200, Height: 0}, // Width 200, Height unlimited
+				MaxSize:    Size{Width: 200, Height: 0},                     // Width 200, Height unlimited
 				Background: SolidColorBrush{Color: walk.RGB(240, 240, 240)}, // Light Gray
 				Children: []Widget{
 					VSpacer{Size: 10},
@@ -138,8 +138,8 @@ func (app *NovelApp) Run() {
 			Composite{
 				AssignTo:      &app.ContentComposite,
 				Layout:        HBox{MarginsZero: true}, // Use HBox for internal Novel View
-				StretchFactor: 1, // Fill remaining width
-				Children:      []Widget{}, // Initially empty, populated by createNovelView
+				StretchFactor: 1,                       // Fill remaining width
+				Children:      []Widget{},              // Initially empty, populated by createNovelView
 			},
 		},
 		OnSizeChanged: func() {
@@ -203,7 +203,7 @@ func (app *NovelApp) createDownloaderView() {
 	}
 
 	builder := NewBuilder(app.ContentComposite)
-	
+
 	Composite{
 		AssignTo: &app.DownloaderComposite,
 		Layout:   HBox{Margins: Margins{Left: 10, Top: 10, Right: 10, Bottom: 10}},
@@ -261,12 +261,12 @@ func (app *NovelApp) handleDownload() {
 		walk.MsgBox(app.MainWindow, "错误", "请输入链接", walk.MsgBoxIconError)
 		return
 	}
-	
+
 	app.log("开始下载: " + url)
-	
+
 	go func() {
 		dir, err := novel.DownloadXHSArticle(url)
-		
+
 		app.MainWindow.Synchronize(func() {
 			if err != nil {
 				app.log("下载失败: " + err.Error())
@@ -543,43 +543,43 @@ func (app *NovelApp) createNovelView() {
 	}
 
 	builder := NewBuilder(app.ContentComposite)
-	
+
 	err := Composite{
 		AssignTo: &app.NovelComposite,
 		Layout:   HBox{Margins: Margins{Left: 10, Top: 10, Right: 10, Bottom: 10}},
 		Children: []Widget{
 			// Reading Area (Stack: Image + TextEdit)
 			Composite{
-				Layout: HBox{MarginsZero: true}, 
+				Layout: HBox{MarginsZero: true},
 				Children: []Widget{
 					ImageView{
 						AssignTo: &app.ImageView,
-						Mode:     ImageViewModeZoom, 
+						Mode:     ImageViewModeZoom,
 						MinSize:  Size{Width: 367, Height: 638}, // Half of 734x1276 for display
 					},
 					TextEdit{
-						AssignTo:  &app.TextEdit,
-						Visible:   false,
-						VScroll:   true, 
+						AssignTo: &app.TextEdit,
+						Visible:  false,
+						VScroll:  true,
 					},
 				},
 			},
 			// Buttons (Right Side)
 			Composite{
-				Layout: VBox{Margins: Margins{Left: 10}}, // Add left margin
+				Layout:  VBox{Margins: Margins{Left: 10}}, // Add left margin
 				MaxSize: Size{Width: 150},
 				Children: []Widget{
 					Label{Text: "分辨率:"},
 					ComboBox{
-						AssignTo:      &app.ResolutionCB,
-						Model:         []string{"734x1276", "1080x1440"},
-						CurrentIndex:  0, // Default 734x1276
+						AssignTo:              &app.ResolutionCB,
+						Model:                 []string{"734x1276", "1080x1440"},
+						CurrentIndex:          0, // Default 734x1276
 						OnCurrentIndexChanged: app.handleResolutionChange,
 					},
 					VSpacer{Size: 10},
 					Label{
-						AssignTo: &app.PageLabel,
-						Text:     "Page: 0/0",
+						AssignTo:      &app.PageLabel,
+						Text:          "Page: 0/0",
 						TextAlignment: AlignCenter,
 					},
 					PushButton{
@@ -604,20 +604,20 @@ func (app *NovelApp) createNovelView() {
 					},
 					VSpacer{Size: 10},
 					PushButton{
-						Text: "截图",
+						Text:      "截图",
 						OnClicked: app.handleScreenshot,
 					},
 					PushButton{
-						Text: "导入",
+						Text:      "导入",
 						OnClicked: app.handleImport,
 					},
 					PushButton{
-						Text: "设置背景",
+						Text:      "设置背景",
 						OnClicked: app.handleSetBackground,
 					},
 					PushButton{
-						AssignTo: &app.EditBtn,
-						Text:     "编辑",
+						AssignTo:  &app.EditBtn,
+						Text:      "编辑",
 						OnClicked: app.toggleEdit,
 					},
 					VSpacer{}, // Push buttons to top
@@ -625,7 +625,7 @@ func (app *NovelApp) createNovelView() {
 			},
 		},
 	}.Create(builder)
-	
+
 	if err != nil {
 		fmt.Println("Error creating novel view:", err)
 	}
@@ -635,7 +635,7 @@ func (app *NovelApp) handleResolutionChange() {
 	if app.ResolutionCB == nil || app.Processor == nil {
 		return
 	}
-	
+
 	idx := app.ResolutionCB.CurrentIndex()
 	switch idx {
 	case 0: // 734x1276
@@ -647,12 +647,12 @@ func (app *NovelApp) handleResolutionChange() {
 		app.Processor.PaddingRight = 50
 		app.Processor.PaddingTop = 100
 		app.Processor.PaddingBottom = 30
-		
+
 		// Update ImageView size
 		if app.ImageView != nil {
 			app.ImageView.SetMinMaxSize(walk.Size{Width: 367, Height: 638}, walk.Size{})
 		}
-		
+
 	case 1: // 1080x1440
 		app.Processor.Width = 1080
 		app.Processor.Height = 1440
@@ -662,13 +662,13 @@ func (app *NovelApp) handleResolutionChange() {
 		app.Processor.PaddingRight = 80
 		app.Processor.PaddingTop = 150
 		app.Processor.PaddingBottom = 50
-		
+
 		// Update ImageView size
 		if app.ImageView != nil {
 			app.ImageView.SetMinMaxSize(walk.Size{Width: 540, Height: 720}, walk.Size{})
 		}
 	}
-	
+
 	// Repaginate and update view
 	if err := app.Processor.Paginate(); err != nil {
 		fmt.Println("Error repaginating:", err)
@@ -686,27 +686,27 @@ func (app *NovelApp) updateReadingView() {
 		}
 		return
 	}
-	
+
 	if app.PageLabel != nil {
-		app.PageLabel.SetText(fmt.Sprintf("Page: %d/%d\nWords: %d", 
-			app.Processor.CurrentPage+1, 
+		app.PageLabel.SetText(fmt.Sprintf("Page: %d/%d\nWords: %d",
+			app.Processor.CurrentPage+1,
 			app.Processor.TotalPages,
 			utf8.RuneCountInString(app.Processor.Content),
 		))
 	}
-	
+
 	img, err := app.Processor.GetPageImage(app.Processor.CurrentPage)
 	if err != nil {
 		fmt.Println("Error rendering:", err)
 		return
 	}
-	
+
 	bitmap, err := walk.NewBitmapFromImage(img)
 	if err != nil {
 		fmt.Println("Error converting image:", err)
 		return
 	}
-	
+
 	if app.ImageView != nil {
 		app.ImageView.SetImage(bitmap)
 	}
@@ -717,7 +717,7 @@ func (app *NovelApp) handleImport() {
 		fmt.Println("MainWindow is nil")
 		return
 	}
-	
+
 	// If currently editing, switch back to view mode first
 	if app.IsEditing {
 		app.toggleEdit()
@@ -726,9 +726,9 @@ func (app *NovelApp) handleImport() {
 	var dlg *walk.Dialog
 	var urlTE *walk.TextEdit
 	var titleTE *walk.TextEdit
-	
+
 	icon, _ := walk.NewIconFromFile("icon.ico")
-	
+
 	Dialog{
 		AssignTo: &dlg,
 		Title:    "导入小说",
@@ -747,8 +747,8 @@ func (app *NovelApp) handleImport() {
 						walk.MsgBox(dlg, "错误", "标题不能为空", walk.MsgBoxIconError)
 						return
 					}
-					
-					dlg.Close(walk.DlgCmdOK) 
+
+					dlg.Close(walk.DlgCmdOK)
 					dlgFile := new(walk.FileDialog)
 					dlgFile.Filter = "Text Files (*.txt)|*.txt|All Files (*.*)|*.*"
 					if ok, err := dlgFile.ShowOpen(app.MainWindow); err != nil {
@@ -781,7 +781,7 @@ func (app *NovelApp) handleImport() {
 								walk.MsgBox(dlg, "错误", "标题不能为空", walk.MsgBoxIconError)
 								return
 							}
-							
+
 							url := urlTE.Text()
 							if url != "" {
 								dlg.Close(walk.DlgCmdOK)
@@ -801,8 +801,10 @@ func (app *NovelApp) handleImport() {
 }
 
 func (app *NovelApp) handleSetBackground() {
-	if app.MainWindow == nil { return }
-	
+	if app.MainWindow == nil {
+		return
+	}
+
 	dlg := new(walk.FileDialog)
 	dlg.Filter = "Images (*.png;*.jpg)|*.png;*.jpg"
 	if ok, err := dlg.ShowOpen(app.MainWindow); err != nil {
@@ -814,11 +816,13 @@ func (app *NovelApp) handleSetBackground() {
 }
 
 func (app *NovelApp) handleScreenshot() {
-	if app.MainWindow == nil { return }
+	if app.MainWindow == nil {
+		return
+	}
 
 	var dlg *walk.Dialog
 	var pageTE *walk.TextEdit
-	
+
 	Dialog{
 		AssignTo: &dlg,
 		Title:    "导出截图",
@@ -835,14 +839,14 @@ func (app *NovelApp) handleScreenshot() {
 						walk.MsgBox(dlg, "错误", "无效的数字", walk.MsgBoxIconError)
 						return
 					}
-					
+
 					folderName := app.Processor.Title
 					if folderName == "" {
 						folderName = "output"
 					}
-					
+
 					dlg.Close(walk.DlgCmdOK)
-					
+
 					go func() {
 						err := app.Processor.BatchExportImages(count, folderName)
 						app.MainWindow.Synchronize(func() {
@@ -866,12 +870,12 @@ func (app *NovelApp) toggleEdit() {
 		if err := app.Processor.Paginate(); err != nil {
 			walk.MsgBox(app.MainWindow, "Error", err.Error(), walk.MsgBoxIconError)
 		}
-		
+
 		filename := app.Processor.Title + ".txt"
 		if err := app.Processor.SaveToFile(filename); err != nil {
 			walk.MsgBox(app.MainWindow, "Error", err.Error(), walk.MsgBoxIconError)
 		}
-		
+
 		app.IsEditing = false
 		app.EditBtn.SetText("编辑")
 		app.TextEdit.SetVisible(false)
@@ -936,27 +940,27 @@ func (app *NovelApp) createCoverView() {
 			fmt.Println("Error reading image directory:", err)
 		}
 	}
-	
+
 	// Prepare thumbnail widgets
 	app.CoverThumbComposites = make([]*walk.Composite, len(imageFiles))
 	var thumbWidgets []Widget
-	
+
 	for i, file := range imageFiles {
 		idx := i
 		name := file
 		fullPath := filepath.Join(imageDir, name)
-		
+
 		// Determine initial background color
 		bgColor := walk.RGB(240, 240, 240)
 		if i == 0 {
 			bgColor = walk.RGB(173, 216, 230) // Selected
 			app.CoverSelectedImage = name
 		}
-		
+
 		thumbWidgets = append(thumbWidgets, Composite{
-			AssignTo: &app.CoverThumbComposites[idx],
-			Layout: VBox{Margins: Margins{Left: 5, Top: 5, Right: 5, Bottom: 5}},
-			MaxSize: Size{Width: 100, Height: 140},
+			AssignTo:   &app.CoverThumbComposites[idx],
+			Layout:     VBox{Margins: Margins{Left: 5, Top: 5, Right: 5, Bottom: 5}},
+			MaxSize:    Size{Width: 100, Height: 140},
 			Background: SolidColorBrush{Color: bgColor},
 			OnMouseDown: func(x, y int, button walk.MouseButton) {
 				app.selectCoverImage(name)
@@ -964,8 +968,8 @@ func (app *NovelApp) createCoverView() {
 			},
 			Children: []Widget{
 				ImageView{
-					Image: fullPath,
-					Mode: ImageViewModeZoom,
+					Image:   fullPath,
+					Mode:    ImageViewModeZoom,
 					MinSize: Size{Width: 90, Height: 120},
 					MaxSize: Size{Width: 90, Height: 120},
 					OnMouseDown: func(x, y int, button walk.MouseButton) {
@@ -976,11 +980,11 @@ func (app *NovelApp) createCoverView() {
 			},
 		})
 	}
-	
-	defaultContent := "1. 全文9900+字，已完结\r\n2. 下单秒发货，默认链接\r\n3. 提取链接：对话框内、物流信息处\r\n4. 电子书籍，下单后恕不退换"
+
+	defaultContent := "1. 全文9900+字，已完结\r\n2. 下单秒发链接，恕不退换\r\n3. 提取链接：对话框内、物流信息处\r\n"
 
 	builder := NewBuilder(app.ContentComposite)
-	
+
 	err = Composite{
 		AssignTo: &app.CoverComposite,
 		Layout:   HBox{Margins: Margins{Left: 10, Top: 10, Right: 10, Bottom: 10}},
@@ -992,11 +996,11 @@ func (app *NovelApp) createCoverView() {
 					// Block 1: Image Selection
 					Label{Text: "选择图像 (点击选中):"},
 					ScrollView{
-						MaxSize: Size{Height: 160},
-						Layout:  Flow{Margins: Margins{Left: 5, Top: 5, Right: 5, Bottom: 5}, Spacing: 10},
+						MaxSize:  Size{Height: 160},
+						Layout:   Flow{Margins: Margins{Left: 5, Top: 5, Right: 5, Bottom: 5}, Spacing: 10},
 						Children: thumbWidgets,
 					},
-					
+
 					// Block 2: Title Input
 					Composite{
 						Layout: HBox{MarginsZero: true},
@@ -1014,7 +1018,7 @@ func (app *NovelApp) createCoverView() {
 							},
 						},
 					},
-					
+
 					// Block 3: Content Input
 					Composite{
 						Layout: HBox{MarginsZero: true},
@@ -1034,18 +1038,18 @@ func (app *NovelApp) createCoverView() {
 						Text:     defaultContent,
 						MinSize:  Size{Height: 100},
 					},
-					
+
 					// Block 4: Processed Image Display
 					VSpacer{Size: 10},
 					Label{Text: "预览:"},
 					ImageView{
 						AssignTo: &app.CoverImageView,
 						Mode:     ImageViewModeZoom,
-						MinSize:  Size{Width: 300, Height: 400}, 
+						MinSize:  Size{Width: 300, Height: 400},
 					},
 				},
 			},
-			
+
 			// Right Panel (Buttons)
 			Composite{
 				Layout:  VBox{Margins: Margins{Left: 10}},
@@ -1064,7 +1068,7 @@ func (app *NovelApp) createCoverView() {
 			},
 		},
 	}.Create(builder)
-	
+
 	if err != nil {
 		fmt.Println("Error creating cover view:", err)
 	}
@@ -1072,7 +1076,7 @@ func (app *NovelApp) createCoverView() {
 
 func (app *NovelApp) selectCoverImage(name string) {
 	app.CoverSelectedImage = name
-	
+
 	// Need to find the index of this name in the image list to update the corresponding composite
 	// But we don't store the image list in app struct.
 	// We can store the image names in the app struct or just rely on the order if we don't change it.
@@ -1082,8 +1086,10 @@ func (app *NovelApp) selectCoverImage(name string) {
 
 func (app *NovelApp) updateCoverSelectionUI(selectedIndex int) {
 	for i, cmp := range app.CoverThumbComposites {
-		if cmp == nil { continue }
-		
+		if cmp == nil {
+			continue
+		}
+
 		if i == selectedIndex {
 			// Selected: Blue border/background
 			b, _ := walk.NewSolidColorBrush(walk.RGB(173, 216, 230)) // Light Blue
@@ -1100,35 +1106,35 @@ func (app *NovelApp) handleCoverGenerate() {
 	if app.CoverTitleInput == nil || app.CoverContentInput == nil {
 		return
 	}
-	
+
 	// Get inputs
 	imageName := app.CoverSelectedImage
 	if imageName == "" {
 		walk.MsgBox(app.MainWindow, "错误", "请选择图片", walk.MsgBoxIconError)
 		return
 	}
-	
+
 	basePath := filepath.Join("e:\\worksapce\\short_stories\\novel_reader\\首图", imageName)
-	
+
 	// If relative path exists, use it
 	if _, err := os.Stat(filepath.Join("首图", imageName)); err == nil {
 		basePath = filepath.Join("首图", imageName)
 	}
-	
+
 	title := app.CoverTitleInput.Text()
 	content := app.CoverContentInput.Text()
-	
+
 	// Parse font sizes
 	titleSize, err := strconv.ParseFloat(app.CoverTitleSizeInput.Text(), 64)
 	if err != nil || titleSize <= 0 {
 		titleSize = 60
 	}
-	
+
 	contentSize, err := strconv.ParseFloat(app.CoverContentSizeInput.Text(), 64)
 	if err != nil || contentSize <= 0 {
 		contentSize = 40
 	}
-	
+
 	// Generate
 	gen := novel.NewCoverGenerator(app.Processor.FontPath)
 	img, err := gen.GenerateCover(basePath, title, content, titleSize, contentSize)
@@ -1136,7 +1142,7 @@ func (app *NovelApp) handleCoverGenerate() {
 		walk.MsgBox(app.MainWindow, "错误", "生成失败: "+err.Error(), walk.MsgBoxIconError)
 		return
 	}
-	
+
 	// Display
 	bitmap, err := walk.NewBitmapFromImage(img)
 	if err != nil {
@@ -1144,7 +1150,7 @@ func (app *NovelApp) handleCoverGenerate() {
 		return
 	}
 	app.CoverImageView.SetImage(bitmap)
-	
+
 	// Store image for copying
 	app.LastCoverImage = img
 }
@@ -1154,12 +1160,12 @@ func (app *NovelApp) handleCoverCopy() {
 		walk.MsgBox(app.MainWindow, "错误", "请先生成图片", walk.MsgBoxIconError)
 		return
 	}
-	
+
 	// Save to temp file to copy to clipboard (PowerShell method requires file)
 	// Or use a clipboard library. Since we used PowerShell before, let's stick to it but use a temp file.
 	tempDir := os.TempDir()
 	tempFile := filepath.Join(tempDir, "novel_reader_cover_temp.png")
-	
+
 	// Save image to temp file
 	f, err := os.Create(tempFile)
 	if err != nil {
@@ -1167,18 +1173,18 @@ func (app *NovelApp) handleCoverCopy() {
 		return
 	}
 	defer f.Close()
-	
+
 	if err := png.Encode(f, app.LastCoverImage); err != nil {
 		walk.MsgBox(app.MainWindow, "错误", "无法保存临时图片: "+err.Error(), walk.MsgBoxIconError)
 		return
 	}
 	f.Close() // Close before using in PowerShell
-	
+
 	path := strings.ReplaceAll(tempFile, "'", "''")
-	
+
 	// Use PowerShell to copy image to clipboard
 	cmd := exec.Command("powershell", "-WindowStyle", "Hidden", "-Command", "Add-Type -AssemblyName System.Windows.Forms; $img = [System.Drawing.Image]::FromFile('"+path+"'); [System.Windows.Forms.Clipboard]::SetImage($img); $img.Dispose()")
-	
+
 	if err := cmd.Run(); err != nil {
 		walk.MsgBox(app.MainWindow, "错误", "复制失败: "+err.Error(), walk.MsgBoxIconError)
 	} else {
