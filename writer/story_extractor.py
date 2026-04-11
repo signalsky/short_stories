@@ -81,12 +81,17 @@ def extract_storyline():
 4. 保证逻辑完整、因果清晰，从开端、发展、反转到结局，链条不能断裂。
 5. 请根据小说内容，提炼一个抓人眼球的、极具吸引力的短篇小说书名。
 6. 提取小说中的核心人物，以列表形式返回。注意：必须且只能使用角色代称（如：女主、女配、男主、男配等），绝对不能出现真实姓名！
+7. 提取核心人物的性格特征，返回一个字典，Key 为角色代称，Value 为该角色的核心性格描述（例如：“坚韧独立，外柔内刚”）。
 
 【JSON 格式要求】：
 请返回以下 JSON 结构：
 {
   "书名": "（你生成的小说名，例如：闪婚后婆婆竟是我生母）",
   "核心人物": ["女主", "男主", "女主生母", "男主养父"],
+  "人物性格": {
+    "女主": "",
+    "男主": ""
+  },
   "故事线提取": {
     "起": "...",
     "承": "...",
@@ -292,7 +297,7 @@ def extract_storyline():
         else:
             print("Failed to extract emotion points.")
             
-        # 5. 基于情绪点切分原文并给出调整建议
+        # 5. 基于情绪点切分原文并给出调整建议及场景细纲
         print("Start splitting story by emotion scenes...")
         
         # 提取刚刚生成的“女主”关键场景情绪字典
@@ -303,7 +308,7 @@ def extract_storyline():
         else:
             split_prompt = f'''你是一个专业的小说编辑。
 请根据以下提取出的【女主关键场景情绪列表】，将【小说原文】严格按这些场景进行切分。
-同时，请以专业的网文编辑视角，对每一段切分出来的原文内容给出“字数调整建议”。
+同时，请以专业的网文编辑视角，对每一段切分出来的原文内容给出“字数调整建议”，并且【提取该场景的详细剧情细纲】。
 
 【字数调整建议规则】：
 - 如果你认为该段落节奏正好、情绪饱满，请给出 `0`。
@@ -314,15 +319,21 @@ def extract_storyline():
 1. 必须且只能输出合法的 JSON 格式，不要包含任何 Markdown 标记（如 ```json ）或额外文本。
 2. 你的切分必须覆盖【全部小说原文】。
 3. 请在后台先计算出每个场景对应的【当前原文真实字数】，然后根据你的“调整建议（比例）”计算出【目标字数】。
-4. 返回的 JSON 必须且只能是一个字典，包含一个 "场景切分与建议" 的键。它的值也必须是一个单纯的字典（绝对不要使用列表 list），Key 是场景名，Value 是你计算出的该场景【目标字数】（整数）。
-5. 绝对不要返回“对应情绪”、“切分原文”、“当前字数”、“调整建议”等其他多余字段，只要一个目标字数！
+4. 必须为每个场景提取一段【剧情细纲】，清晰说明该场景中到底发生了什么事。
+   - 【防抄袭强制要求】：剧情细纲中绝对不能出现主角的真实姓名（统一用女主、男主、男主母亲等代称），并且必须模糊化具体地点和特定名词（比如不要写“沙发”，写“某处”或直接忽略地点；不要写“马尔代夫”，写“度假地”）。
+5. 返回的 JSON 必须且只能是一个字典，包含一个 "场景切分与建议" 的键。它的值必须是一个字典，Key 是场景名，Value 也是一个字典，包含 "目标字数"（整数）和 "剧情细纲"（字符串）两个字段。绝对不要返回多余字段。
 
 【JSON 格式要求示例】：
 {{
   "场景切分与建议": {{
-    "（对应列表中的场景名1）": 190,
-    "（对应列表中的场景名2）": 450,
-    "（对应列表中的场景名3）": 320
+    "（对应列表中的场景名1）": {{
+      "目标字数": 190,
+      "剧情细纲": "女主刚进门，男主母亲用审视的目光打量她，女主内心感到局促不安。"
+    }},
+    "（对应列表中的场景名2）": {{
+      "目标字数": 450,
+      "剧情细纲": "女主翻看手机时，突然看到了男主母亲发的寻亲热帖，震惊之余不小心打翻了水杯。"
+    }}
   }}
 }}
 
@@ -376,47 +387,30 @@ def extract_storyline():
                     if isinstance(item, dict):
                         scene_name = item.get("场景名", "")
                         target_words = item.get("目标字数", 0)
+                        outline = item.get("剧情细纲", "")
                         if scene_name:
-                            new_split_dict[scene_name] = target_words
-            # 如果大模型返回的是字典，但里面包含了复杂的结构，我们也提取出来
+                            new_split_dict[scene_name] = {"目标字数": target_words, "剧情细纲": outline}
+            # 如果大模型返回的是字典，提取目标字数和细纲
             elif isinstance(split_data, dict):
                 for k, v in split_data.items():
-                    if isinstance(v, dict) and "目标字数" in v:
-                        new_split_dict[k] = v["目标字数"]
+                    if isinstance(v, dict):
+                        tw = v.get("目标字数", 0)
+                        outline = v.get("剧情细纲", "")
+                        new_split_dict[k] = {"目标字数": tw, "剧情细纲": outline}
                     elif isinstance(v, (int, str)):
                         try:
-                            new_split_dict[k] = int(v)
+                            new_split_dict[k] = {"目标字数": int(v), "剧情细纲": ""}
                         except:
                             pass
                             
             # 替换为纯净的字典
             if new_split_dict:
                 final_result["场景切分与建议"] = new_split_dict
-            elif isinstance(split_data, str):
-                # 如果是字符串，可能是 JSON 解析失败留下的，尝试强行解析
-                try:
-                    import re
-                    # 尝试用正则找场景名和目标字数
-                    matches = re.findall(r'"场景名"\s*:\s*"([^"]+)"[^\}]+?"目标字数"\s*:\s*(\d+)', split_data)
-                    for scene_name, target_words in matches:
-                        new_split_dict[scene_name] = int(target_words)
-                    
-                    if not new_split_dict:
-                        # 尝试另一种常见的格式 {"场景名": 100}
-                        matches2 = re.findall(r'"([^"]+)"\s*:\s*(\d+)', split_data)
-                        for scene_name, target_words in matches2:
-                            if scene_name != "场景切分与建议":
-                                new_split_dict[scene_name] = int(target_words)
-
-                    if new_split_dict:
-                        final_result["场景切分与建议"] = new_split_dict
-                except:
-                    pass
             
             # 增加基于原文长度按比例重新分配字数的逻辑，防止大模型计算出来的总和太少
             if isinstance(final_result.get("场景切分与建议"), dict):
                 valid_dict = final_result["场景切分与建议"]
-                total_calculated = sum(valid_dict.values())
+                total_calculated = sum([v.get("目标字数", 0) for v in valid_dict.values() if isinstance(v, dict)])
                 actual_total = len(story_content)
                 
                 # 无论大模型计算的总和是多少，只要它偏离实际字数超过 10%，我们就按比例强制缩放
@@ -425,7 +419,13 @@ def extract_storyline():
                     print(f"LLM target total ({total_calculated}) is deviated from actual total ({actual_total}). Scaling by {ratio:.2f}...")
                     adjusted_dict = {}
                     for k, v in valid_dict.items():
-                        adjusted_dict[k] = int(v * ratio)
+                        if isinstance(v, dict):
+                            adjusted_dict[k] = {
+                                "目标字数": int(v.get("目标字数", 0) * ratio),
+                                "剧情细纲": v.get("剧情细纲", "")
+                            }
+                        else:
+                            adjusted_dict[k] = v
                     final_result["场景切分与建议"] = adjusted_dict
 
         # 在保存前，递归清理所有值为“无”或“无。”的空场景/情绪
