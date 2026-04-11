@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>提取大纲 - 灼见短篇</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: #f8fafc;
+        }
+        
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+
+        /* Toast notification */
+        .toast {
+            position: fixed;
+            top: 24px;
+            right: 24px;
+            transform: translateX(150%);
+            transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+            z-index: 50;
+        }
+        .toast.show {
+            transform: translateX(0);
+        }
+
+        .loader {
+            border-top-color: #3b82f6;
+            -webkit-animation: spinner 1.5s linear infinite;
+            animation: spinner 1.5s linear infinite;
+        }
+        @keyframes spinner {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .json-field {
+            transition: all 0.2s;
+        }
+        .json-field.editing {
+            border-color: #3b82f6;
+            background-color: #fff;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+        .json-field.readonly {
+            background-color: #f8fafc;
+            border-color: transparent;
+            resize: none;
+        }
+    </style>
+</head>
+<body class="text-slate-800 antialiased h-screen flex overflow-hidden">
+
+    <!-- 左侧大纲列表 (类似会话列表) -->
+    <aside class="w-72 bg-white border-r border-slate-200 flex flex-col h-full flex-shrink-0 z-10 shadow-sm">
+        <div class="p-4 border-b border-slate-100">
+            <button id="btnNewOutline" class="w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 rounded-xl font-medium text-sm shadow-sm hover:shadow transition-all flex items-center justify-center gap-2 transform active:scale-[0.98]">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                新建小说提取
+            </button>
+        </div>
+        
+        <div class="p-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">
+            历史大纲
+        </div>
+        
+        <div id="outlineList" class="flex-1 overflow-y-auto p-2 space-y-1 no-scrollbar">
+            <!-- 列表项由 JS 动态生成 -->
+            <div class="text-center py-4 text-slate-400 text-sm italic">加载中...</div>
+        </div>
+    </aside>
+
+    <!-- 右侧主内容区 -->
+    <main class="flex-1 flex flex-col h-full relative bg-slate-50">
+        
+        <!-- 顶部工具栏 -->
+        <header class="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-6 flex-shrink-0">
+            <h2 id="mainTitle" class="text-lg font-bold text-slate-800 tracking-tight">请选择或新建大纲</h2>
+            <div id="toolbar" class="hidden items-center gap-3">
+                <button id="btnEdit" class="text-slate-500 hover:text-blue-600 hover:bg-blue-50 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+                    编辑
+                </button>
+                <button id="btnSave" class="hidden bg-blue-600 hover:bg-blue-700 text-white px-4 py-1.5 rounded-lg text-sm font-medium shadow-sm transition-colors flex items-center gap-1">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                    保存修改
+                </button>
+            </div>
+        </header>
+
+        <!-- 滚动内容区 -->
+        <div class="flex-1 overflow-y-auto p-8 relative">
+            
+            <!-- 视图 1：新建上传面板 -->
+            <div id="viewUpload" class="max-w-2xl mx-auto hidden">
+                <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-8">
+                    <h3 class="text-xl font-bold text-slate-800 mb-2">上传小说文本</h3>
+                    <p class="text-slate-500 text-sm mb-8">上传 TXT 格式的小说原文，系统将自动调用大模型提取核心人物、性格、故事线和场景细纲。</p>
+                    
+                    <form id="uploadForm" class="space-y-6">
+                        <div class="border-2 border-dashed border-slate-300 rounded-xl p-8 text-center hover:bg-slate-50 transition-colors cursor-pointer relative" id="dropZone">
+                            <input type="file" id="fileInput" accept=".txt" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer">
+                            <div class="w-16 h-16 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-4">
+                                <svg class="w-8 h-8 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                            </div>
+                            <p class="text-slate-700 font-medium" id="fileNameDisplay">点击选择文件，或将文件拖拽到此处</p>
+                            <p class="text-slate-400 text-xs mt-2">仅支持 .txt 格式纯文本</p>
+                        </div>
+
+                        <div class="flex items-center justify-end pt-4">
+                            <button type="submit" id="btnSubmitExtract" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-xl font-medium text-sm shadow-sm transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                                开始抽取
+                            </button>
+                        </div>
+                    </form>
+
+                    <!-- 提取进度提示 -->
+                    <div id="extractingStatus" class="hidden mt-8 p-6 bg-blue-50 rounded-xl border border-blue-100 text-center">
+                        <div class="loader ease-linear rounded-full border-4 border-t-4 border-blue-200 h-10 w-10 mx-auto mb-4"></div>
+                        <h4 class="text-blue-800 font-medium">正在调用大模型分析文本...</h4>
+                        <p class="text-blue-600 text-xs mt-2">请耐心等待，这可能需要 1-3 分钟时间，期间请勿关闭页面。</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 视图 2：大纲 JSON 展示/编辑面板 -->
+            <div id="viewEditor" class="max-w-5xl mx-auto hidden pb-20">
+                <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                    <div class="p-6 md:p-8 space-y-8" id="editorContainer">
+                        <!-- 动态渲染字段区 -->
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 视图 3：欢迎空状态 -->
+            <div id="viewEmpty" class="h-full flex flex-col items-center justify-center text-center">
+                <div class="w-24 h-24 bg-slate-100 rounded-full flex items-center justify-center mb-6">
+                    <svg class="w-12 h-12 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+                </div>
+                <h3 class="text-xl font-bold text-slate-700">欢迎使用提取大纲功能</h3>
+                <p class="mt-2 text-slate-500 max-w-md">在左侧选择一个历史大纲进行查看和编辑，或者点击“新建”上传新小说。</p>
+            </div>
+
+        </div>
+    </main>
+
+    <!-- Toast 通知 -->
+    <div id="toast" class="toast bg-white border border-slate-200 shadow-lg rounded-xl p-4 flex items-start gap-3 w-80">
+        <div id="toastIconWrapper" class="flex-shrink-0 mt-0.5 rounded-full p-1 bg-green-100 text-green-600">
+            <svg id="toastIcon" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+        </div>
+        <div class="flex-1">
+            <h4 id="toastTitle" class="text-sm font-semibold text-slate-800">操作成功</h4>
+            <p id="toastMessage" class="text-xs text-slate-500 mt-1 leading-relaxed">...</p>
+        </div>
+    </div>
+
+    <script>
+        // DOM 元素
+        const outlineList = document.getElementById('outlineList');
+        const viewUpload = document.getElementById('viewUpload');
+        const viewEditor = document.getElementById('viewEditor');
+        const viewEmpty = document.getElementById('viewEmpty');
+        const mainTitle = document.getElementById('mainTitle');
+        const toolbar = document.getElementById('toolbar');
+        
+        const btnNewOutline = document.getElementById('btnNewOutline');
+        const fileInput = document.getElementById('fileInput');
+        const fileNameDisplay = document.getElementById('fileNameDisplay');
+        const uploadForm = document.getElementById('uploadForm');
+        const btnSubmitExtract = document.getElementById('btnSubmitExtract');
+        const extractingStatus = document.getElementById('extractingStatus');
+        
+        const btnEdit = document.getElementById('btnEdit');
+        const btnSave = document.getElementById('btnSave');
+        const editorContainer = document.getElementById('editorContainer');
+
+        let currentFilename = null;
+        let currentJsonData = null;
+        let isEditing = false;
+
+        // Toast 提示
+        let toastTimeout;
+        function showToast(title, message, isError = false) {
+            const toast = document.getElementById('toast');
+            const toastTitle = document.getElementById('toastTitle');
+            const toastMessage = document.getElementById('toastMessage');
+            const toastIconWrapper = document.getElementById('toastIconWrapper');
+            const toastIcon = document.getElementById('toastIcon');
+            
+            toastTitle.textContent = title;
+            toastMessage.textContent = message;
+            
+            if (isError) {
+                toastIconWrapper.className = 'flex-shrink-0 mt-0.5 rounded-full p-1 bg-red-100 text-red-600';
+                toastIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>';
+            } else {
+                toastIconWrapper.className = 'flex-shrink-0 mt-0.5 rounded-full p-1 bg-green-100 text-green-600';
+                toastIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>';
+            }
+            
+            clearTimeout(toastTimeout);
+            toast.classList.add('show');
+            toastTimeout = setTimeout(() => toast.classList.remove('show'), 3500);
+        }
+
+        // 切换视图
+        function switchView(view) {
+            viewUpload.classList.add('hidden');
+            viewEditor.classList.add('hidden');
+            viewEmpty.classList.add('hidden');
+            toolbar.classList.add('hidden');
+            
+            // 重置左侧激活状态
+            document.querySelectorAll('#outlineList button').forEach(b => {
+                b.classList.remove('bg-blue-50', 'text-blue-700', 'border-blue-500');
+                b.classList.add('text-slate-600', 'border-transparent');
+            });
+
+            if (view === 'upload') {
+                viewUpload.classList.remove('hidden');
+                mainTitle.textContent = "新建大纲提取";
+                resetUploadForm();
+            } else if (view === 'editor') {
+                viewEditor.classList.remove('hidden');
+                toolbar.classList.remove('hidden');
+                toolbar.classList.add('flex');
+            } else {
+                viewEmpty.classList.remove('hidden');
+                mainTitle.textContent = "请选择或新建大纲";
+            }
+        }
+
+        // 获取左侧大纲列表
+        async function fetchOutlines() {
+            try {
+                const res = await fetch('/api/outlines');
+                const files = await res.json();
+                
+                outlineList.innerHTML = '';
+                if (files.length === 0) {
+                    outlineList.innerHTML = '<div class="text-center py-4 text-slate-400 text-sm">暂无数据</div>';
+                    return;
+                }
+
+                files.forEach(file => {
+                    const nameWithoutExt = file.replace('.json', '');
+                    const btn = document.createElement('button');
+                    btn.className = `w-full text-left px-3 py-2.5 rounded-lg text-sm font-medium border-l-2 border-transparent text-slate-600 hover:bg-slate-50 transition-all truncate`;
+                    btn.textContent = nameWithoutExt;
+                    btn.dataset.filename = file;
+                    btn.title = nameWithoutExt;
+                    
+                    btn.onclick = () => loadOutline(file, btn);
+                    outlineList.appendChild(btn);
+                });
+                
+                // 如果当前有选中的文件，重新加上高亮
+                if (currentFilename) {
+                    const activeBtn = document.querySelector(`button[data-filename="${currentFilename}"]`);
+                    if (activeBtn) highlightSidebarItem(activeBtn);
+                }
+
+            } catch (err) {
+                console.error("Failed to fetch outlines:", err);
+                outlineList.innerHTML = '<div class="text-center py-4 text-red-400 text-sm">加载失败</div>';
+            }
+        }
+
+        function highlightSidebarItem(btn) {
+            document.querySelectorAll('#outlineList button').forEach(b => {
+                b.classList.remove('bg-blue-50', 'text-blue-700', 'border-blue-500');
+                b.classList.add('text-slate-600', 'border-transparent');
+            });
+            btn.classList.add('bg-blue-50', 'text-blue-700', 'border-blue-500');
+            btn.classList.remove('text-slate-600', 'border-transparent');
+        }
+
+        // 加载单个大纲内容
+        async function loadOutline(filename, btnElement) {
+            try {
+                const res = await fetch(`/api/outlines/${filename}`);
+                if (!res.ok) throw new Error("获取文件失败");
+                
+                currentJsonData = await res.json();
+                currentFilename = filename;
+                
+                mainTitle.textContent = currentJsonData['书名'] || filename.replace('.json', '');
+                highlightSidebarItem(btnElement);
+                
+                renderEditor(currentJsonData);
+                setEditMode(false);
+                switchView('editor');
+                
+            } catch (err) {
+                showToast("错误", err.message, true);
+            }
+        }
+
+        // 将 JSON 渲染为更友好的表单卡片
+        function renderEditor(data) {
+            editorContainer.innerHTML = '';
+            
+            // 顶级字段（除了特定的长字典外）
+            const topLevelKeys = Object.keys(data).filter(k => k !== '人物性格' && k !== '故事线提取' && k !== '情绪点提取' && k !== '场景切分与建议');
+            
+            // 1. 渲染基本信息卡片
+            if (topLevelKeys.length > 0) {
+                const basicCard = createCard('基本信息');
+                topLevelKeys.forEach(key => {
+                    basicCard.appendChild(createField(key, data[key], key));
+                });
+                editorContainer.appendChild(basicCard);
+            }
+            
+            // 2. 渲染人物性格
+            if (data['人物性格']) {
+                const charCard = createCard('人物性格');
+                for (const [role, desc] of Object.entries(data['人物性格'])) {
+                    charCard.appendChild(createField(role, desc, `人物性格.${role}`));
+                }
+                editorContainer.appendChild(charCard);
+            }
+            
+            // 3. 渲染故事线提取
+            if (data['故事线提取']) {
+                const storyCard = createCard('故事线提取');
+                for (const [stage, desc] of Object.entries(data['故事线提取'])) {
+                    storyCard.appendChild(createField(stage, desc, `故事线提取.${stage}`));
+                }
+                editorContainer.appendChild(storyCard);
+            }
+            
+            // 4. 渲染情绪点提取 (最深层级的，需要特殊拍平处理)
+            if (data['情绪点提取']) {
+                const emotionCard = createCard('情绪点提取');
+                for (const [role, roleData] of Object.entries(data['情绪点提取'])) {
+                    // 角色块容器
+                    const roleBlock = document.createElement('div');
+                    roleBlock.className = 'mb-6 p-4 bg-slate-50 rounded-xl border border-slate-200';
+                    
+                    const roleTitle = document.createElement('h5');
+                    roleTitle.className = 'font-bold text-blue-700 mb-4 pb-2 border-b border-blue-100 flex items-center gap-2';
+                    roleTitle.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>${role}`;
+                    roleBlock.appendChild(roleTitle);
+                    
+                    if (roleData['核心主线']) {
+                        roleBlock.appendChild(createField('核心主线', roleData['核心主线'], `情绪点提取.${role}.核心主线`));
+                    }
+                    
+                    if (roleData['关键场景情绪']) {
+                        const sceneTitle = document.createElement('div');
+                        sceneTitle.className = 'text-xs font-semibold text-slate-500 uppercase mt-4 mb-2';
+                        sceneTitle.textContent = '关键场景情绪';
+                        roleBlock.appendChild(sceneTitle);
+                        
+                        const gridDiv = document.createElement('div');
+                        gridDiv.className = 'grid grid-cols-1 md:grid-cols-2 gap-4';
+                        for (const [scene, em] of Object.entries(roleData['关键场景情绪'])) {
+                            gridDiv.appendChild(createField(scene, em, `情绪点提取.${role}.关键场景情绪.${scene}`, true));
+                        }
+                        roleBlock.appendChild(gridDiv);
+                    }
+                    
+                    if (roleData['内心矛盾']) {
+                        roleBlock.appendChild(createField('内心矛盾', roleData['内心矛盾'], `情绪点提取.${role}.内心矛盾`));
+                    }
+                    if (roleData['体感细节']) {
+                        roleBlock.appendChild(createField('体感细节', roleData['体感细节'], `情绪点提取.${role}.体感细节`));
+                    }
+                    
+                    emotionCard.appendChild(roleBlock);
+                }
+                editorContainer.appendChild(emotionCard);
+            }
+            
+            // 5. 渲染场景切分与建议
+            if (data['场景切分与建议']) {
+                const sceneCard = createCard('场景切分与建议');
+                for (const [sceneName, sceneData] of Object.entries(data['场景切分与建议'])) {
+                    const sceneBlock = document.createElement('div');
+                    sceneBlock.className = 'mb-4 p-4 bg-slate-50 rounded-xl border border-slate-200';
+                    
+                    const headerDiv = document.createElement('div');
+                    headerDiv.className = 'flex items-center justify-between mb-3 pb-2 border-b border-slate-200';
+                    
+                    const sTitle = document.createElement('h5');
+                    sTitle.className = 'font-bold text-slate-800';
+                    sTitle.textContent = sceneName;
+                    
+                    const wordCountDiv = document.createElement('div');
+                    wordCountDiv.className = 'flex items-center gap-2 text-sm';
+                    wordCountDiv.innerHTML = `<span class="text-slate-500">目标字数:</span>`;
+                    
+                    const twInput = document.createElement('input');
+                    twInput.type = 'text';
+                    twInput.className = 'w-20 px-2 py-1 text-center rounded bg-white border border-slate-300 text-slate-700 json-field readonly outline-none';
+                    twInput.value = sceneData['目标字数'] || 0;
+                    twInput.dataset.keypath = `场景切分与建议.${sceneName}.目标字数`;
+                    twInput.readOnly = true;
+                    
+                    wordCountDiv.appendChild(twInput);
+                    headerDiv.appendChild(sTitle);
+                    headerDiv.appendChild(wordCountDiv);
+                    sceneBlock.appendChild(headerDiv);
+                    
+                    if (sceneData['剧情细纲']) {
+                        sceneBlock.appendChild(createField('剧情细纲', sceneData['剧情细纲'], `场景切分与建议.${sceneName}.剧情细纲`, false, true));
+                    }
+                    
+                    sceneCard.appendChild(sceneBlock);
+                }
+                editorContainer.appendChild(sceneCard);
+            }
+            
+            // 触发一次高度自适应
+            setTimeout(() => {
+                document.querySelectorAll('textarea').forEach(ta => {
+                    ta.style.height = 'auto';
+                    ta.style.height = (ta.scrollHeight) + 'px';
+                });
+            }, 10);
+        }
+        
+        // 辅助函数：创建卡片容器
+        function createCard(title) {
+            const card = document.createElement('div');
+            card.className = 'mb-8';
+            const h4 = document.createElement('h4');
+            h4.className = 'text-lg font-bold text-slate-800 mb-4 flex items-center gap-2';
+            h4.innerHTML = `<span class="w-1.5 h-5 bg-blue-500 rounded-full inline-block"></span>${title}`;
+            card.appendChild(h4);
+            return card;
+        }
+        
+        // 辅助函数：创建输入框
+        function createField(labelStr, value, keyPath, compact = false, hideLabel = false) {
+            const wrapper = document.createElement('div');
+            wrapper.className = compact ? 'space-y-1' : 'mb-4 space-y-1.5';
+            
+            if (!hideLabel) {
+                const label = document.createElement('label');
+                label.className = 'block text-sm font-semibold text-slate-600';
+                label.textContent = labelStr;
+                wrapper.appendChild(label);
+            }
+            
+            let input;
+            let valStr = Array.isArray(value) ? JSON.stringify(value, null, 2) : value;
+            
+            if (typeof valStr === 'string' && (valStr.length > 40 || valStr.includes('\n') || Array.isArray(value))) {
+                input = document.createElement('textarea');
+                input.rows = Array.isArray(value) ? 3 : Math.min(Math.max(valStr.split('\n').length, 2), 8);
+                input.className = 'w-full px-3 py-2 rounded-lg text-sm text-slate-800 json-field readonly outline-none leading-relaxed border border-transparent';
+            } else {
+                input = document.createElement('input');
+                input.type = 'text';
+                input.className = 'w-full px-3 py-2 rounded-lg text-sm text-slate-800 json-field readonly outline-none border border-transparent';
+            }
+            
+            input.value = valStr;
+            input.dataset.keypath = keyPath;
+            input.readOnly = true;
+            
+            if (input.tagName === 'TEXTAREA') {
+                input.addEventListener('input', function() {
+                    this.style.height = 'auto';
+                    this.style.height = (this.scrollHeight) + 'px';
+                });
+            }
+            
+            wrapper.appendChild(input);
+            return wrapper;
+        }
+
+        // 切换编辑模式
+        function setEditMode(edit) {
+            isEditing = edit;
+            const fields = document.querySelectorAll('.json-field');
+            
+            if (edit) {
+                btnEdit.classList.add('hidden');
+                btnSave.classList.remove('hidden');
+                fields.forEach(f => {
+                    f.readOnly = false;
+                    f.classList.remove('readonly');
+                    f.classList.add('editing');
+                });
+            } else {
+                btnEdit.classList.remove('hidden');
+                btnSave.classList.add('hidden');
+                fields.forEach(f => {
+                    f.readOnly = true;
+                    f.classList.add('readonly');
+                    f.classList.remove('editing');
+                });
+            }
+        }
+
+        // 保存编辑
+        async function saveChanges() {
+            const fields = document.querySelectorAll('.json-field');
+            let newData = JSON.parse(JSON.stringify(currentJsonData)); // 深拷贝
+            let hasError = false;
+
+            fields.forEach(f => {
+                const keyPath = f.dataset.keypath.split('.');
+                let current = newData;
+                
+                // 遍历到倒数第二层
+                for (let i = 0; i < keyPath.length - 1; i++) {
+                    current = current[keyPath[i]];
+                }
+                
+                const lastKey = keyPath[keyPath.length - 1];
+                let val = f.value;
+                
+                // 尝试将原本是数组的字符串转回数组，如果是数字转回数字
+                const originalType = typeof current[lastKey];
+                const originalIsArray = Array.isArray(current[lastKey]);
+                
+                if (originalIsArray) {
+                    try {
+                        val = JSON.parse(val);
+                        if (!Array.isArray(val)) throw new Error("Must be array");
+                    } catch (e) {
+                        hasError = true;
+                        f.classList.add('border-red-500', 'bg-red-50');
+                        showToast("格式错误", `[${lastKey}] 必须是合法的 JSON 数组格式 (例如 ["A", "B"])`, true);
+                    }
+                } else if (originalType === 'number') {
+                    val = Number(val);
+                    if (isNaN(val)) {
+                        hasError = true;
+                        f.classList.add('border-red-500', 'bg-red-50');
+                        showToast("格式错误", `[${lastKey}] 必须是数字`, true);
+                    }
+                }
+                
+                if (!hasError) {
+                    f.classList.remove('border-red-500', 'bg-red-50');
+                    current[lastKey] = val;
+                }
+            });
+
+            if (hasError) return;
+
+            try {
+                const btn = document.getElementById('btnSave');
+                btn.innerHTML = `<svg class="animate-spin w-4 h-4 mr-1" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> 保存中...`;
+                btn.disabled = true;
+
+                const res = await fetch(`/api/outlines/${currentFilename}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(newData)
+                });
+
+                if (!res.ok) throw new Error("保存失败");
+
+                currentJsonData = newData;
+                setEditMode(false);
+                showToast("保存成功", "大纲修改已生效");
+                
+                // 如果修改了书名，更新标题和列表
+                if (mainTitle.textContent !== newData['书名']) {
+                    mainTitle.textContent = newData['书名'];
+                    fetchOutlines(); // 书名可能会影响文件名，这里简单处理刷新列表
+                }
+
+            } catch (err) {
+                showToast("错误", err.message, true);
+            } finally {
+                const btn = document.getElementById('btnSave');
+                btn.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> 保存修改`;
+                btn.disabled = false;
+            }
+        }
+
+        // 文件上传相关
+        function resetUploadForm() {
+            uploadForm.reset();
+            fileNameDisplay.textContent = "点击选择文件，或将文件拖拽到此处";
+            fileNameDisplay.classList.remove('text-blue-600');
+            extractingStatus.classList.add('hidden');
+            btnSubmitExtract.disabled = true;
+            document.getElementById('dropZone').classList.remove('border-blue-500', 'bg-blue-50');
+        }
+
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                fileNameDisplay.textContent = `已选择：${e.target.files[0].name}`;
+                fileNameDisplay.classList.add('text-blue-600');
+                btnSubmitExtract.disabled = false;
+                document.getElementById('dropZone').classList.add('border-blue-500', 'bg-blue-50');
+            } else {
+                resetUploadForm();
+            }
+        });
+
+        uploadForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            if (fileInput.files.length === 0) return;
+
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+
+            btnSubmitExtract.disabled = true;
+            btnSubmitExtract.innerHTML = `准备中...`;
+            extractingStatus.classList.remove('hidden');
+
+            try {
+                const res = await fetch('/api/extract', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const result = await res.json();
+                if (!res.ok) throw new Error(result.error || "抽取失败");
+
+                showToast("抽取成功", "大纲已生成，请在左侧列表中查看");
+                await fetchOutlines(); // 刷新列表
+                
+                // 默认选中第一个（刚生成的最新文件）
+                const firstBtn = outlineList.querySelector('button');
+                if (firstBtn) firstBtn.click();
+
+            } catch (err) {
+                showToast("抽取失败", err.message, true);
+                console.error(err);
+            } finally {
+                btnSubmitExtract.disabled = false;
+                btnSubmitExtract.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg> 开始抽取`;
+                extractingStatus.classList.add('hidden');
+            }
+        });
+
+        // 绑定事件
+        btnNewOutline.addEventListener('click', () => switchView('upload'));
+        btnEdit.addEventListener('click', () => setEditMode(true));
+        btnSave.addEventListener('click', saveChanges);
+
+        // 初始加载
+        fetchOutlines();
+        switchView('empty');
+    </script>
+</body>
+</html>

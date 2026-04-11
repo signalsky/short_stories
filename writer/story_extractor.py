@@ -5,68 +5,19 @@ import requests
 import os
 import subprocess
 import tempfile
+import re
+from utils import call_dashscope_api, clean_and_parse_json
 
-def call_dashscope_api(prompt, api_key, base_url, model):
-    data = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": "你是一个专业的小说分析Agent。"},
-            {"role": "user", "content": prompt}
-        ]
-    }
-    
-    payload_file = os.path.join(os.path.dirname(__file__), "payload.json")
-    with open(payload_file, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False)
-        
-    cmd = [
-        "curl.exe", "-s", "-X", "POST",
-        f"{base_url}/chat/completions",
-        "-H", "Content-Type: application/json",
-        "-H", f"Authorization: Bearer {api_key}",
-        "-d", f"@{payload_file}"
-    ]
-    
-    result_process = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
-    
-    if os.path.exists(payload_file):
-        os.remove(payload_file)
-        
-    if result_process.returncode != 0:
-        print(f"Error during curl call: {result_process.stderr}")
-        return None
-        
-    result = json.loads(result_process.stdout)
-    if "choices" in result and len(result["choices"]) > 0:
-        return result['choices'][0]['message']['content']
-    else:
-        print("API Response format error:", result)
-        return None
-
-def extract_storyline():
+def extract_storyline(story_path):
     print("Start execution")
-    config_path = r"e:\worksapce\short_stories\novel_rewrite\config.json"
-    
-    # 1. 加载配置
-    try:
-        with open(config_path, 'r', encoding='utf-8') as f:
-            config = json.load(f)
-    except Exception as e:
-        print(f"Error reading config: {e}")
-        return
-
-    api_key = config.get("api_key")
-    base_url = config.get("base_url")
-    model = config.get("model", "qwen3.5-plus")
     
     # 2. 加载小说内容
-    story_path = r"e:\worksapce\short_stories\writer\《DNA骗局：总裁的契约娇妻》.txt"
     try:
         with open(story_path, 'r', encoding='utf-8') as f:
             story_content = f.read()
     except Exception as e:
         print(f"Error reading story: {e}")
-        return
+        return None
 
     print(f"Story loaded, length: {len(story_content)}")
 
@@ -105,7 +56,7 @@ def extract_storyline():
 ''' + story_content
 
     print("Sending request to Aliyun DashScope API for storyline via curl...")
-    storyline_content = call_dashscope_api(prompt, api_key, base_url, model)
+    storyline_content = call_dashscope_api(prompt, system_prompt="你是一个专业的小说分析Agent。")
     
     final_result = {}
     
@@ -234,66 +185,16 @@ def extract_storyline():
 '''
         
         print("Sending request to Aliyun DashScope API for emotion points via curl...")
-        emotion_content = call_dashscope_api(emotion_prompt, api_key, base_url, model)
+        emotion_content = call_dashscope_api(emotion_prompt, system_prompt="你是一个专业的小说分析Agent。")
         
         if emotion_content:
-            try:
-                emotion_json = json.loads(emotion_content)
+            emotion_json = clean_and_parse_json(emotion_content)
+            if emotion_json:
                 final_result.update(emotion_json)
                 print("Successfully parsed Emotion JSON.")
-            except Exception as e:
-                print("Failed to parse Emotion JSON:", e)
-                
-                # 尝试提取被 markdown 包裹的 json
-                import re
-                match = re.search(r'```json\s*(.*?)\s*```', emotion_content, re.DOTALL)
-                
-                # 定义一个通用的清理函数来修复大模型可能产生的 JSON 语法错误
-                def clean_and_parse(json_str):
-                    # 针对大模型经常把 "关键场景情绪": { ... ] 的大括号写错成中括号的修复
-                    json_str = re.sub(r'("关键场景情绪"\s*:\s*\{[^\}]*?)\s*\]', r'\1}', json_str, flags=re.DOTALL)
-                    # 尝试直接解析
-                    try:
-                        return json.loads(json_str)
-                    except Exception as e:
-                        # 尝试使用 json_repair 库，如果没装就算了
-                        try:
-                            import json_repair
-                            return json_repair.loads(json_str)
-                        except:
-                            # 暴力替换字典末尾的 ]
-                            json_str = re.sub(r'\}\s*\]', '} }', json_str)
-                            return json.loads(json_str)
-
-                if match:
-                    try:
-                        emotion_json = json.loads(match.group(1))
-                        final_result.update(emotion_json)
-                        print("Successfully parsed Emotion JSON from markdown.")
-                    except Exception as e2:
-                        print("Failed to parse Emotion JSON from markdown:", e2)
-                        # 如果真的解析失败了，尝试清理一些常见错误再试一次
-                        try:
-                            # 尝试使用自定义的清理函数
-                            emotion_json = clean_and_parse(match.group(1))
-                            final_result.update(emotion_json)
-                            print("Successfully parsed Emotion JSON after aggressive cleaning.")
-                        except Exception as e3:
-                            print("Aggressive cleaning failed:", e3)
-                            final_result["情绪点提取"] = emotion_content
-                else:
-                    # 如果没有 ```json 标签，可能大模型直接返回了文本，尝试直接解析
-                    try:
-                        emotion_json = json.loads(emotion_content)
-                        final_result.update(emotion_json)
-                        print("Successfully parsed Emotion JSON directly in fallback.")
-                    except:
-                        try:
-                            emotion_json = clean_and_parse(emotion_content)
-                            final_result.update(emotion_json)
-                            print("Successfully parsed Emotion JSON directly after aggressive cleaning.")
-                        except:
-                            final_result["情绪点提取"] = emotion_content
+            else:
+                print("Failed to parse Emotion JSON, saving raw text.")
+                final_result["情绪点提取"] = emotion_content
         else:
             print("Failed to extract emotion points.")
             
@@ -344,31 +245,16 @@ def extract_storyline():
 {story_content}
 '''
             print("Sending request to Aliyun DashScope API for story splitting via curl...")
-            split_content = call_dashscope_api(split_prompt, api_key, base_url, model)
+            split_content = call_dashscope_api(split_prompt, system_prompt="你是一个专业的小说编辑。")
             
             if split_content:
-                try:
-                    split_json = json.loads(split_content)
+                split_json = clean_and_parse_json(split_content)
+                if split_json:
                     final_result.update(split_json)
                     print("Successfully parsed Splitting JSON.")
-                except Exception as e:
-                    print("Failed to parse Splitting JSON:", e)
-                    import re
-                    match = re.search(r'```json\s*(.*?)\s*```', split_content, re.DOTALL)
-                    if match:
-                        try:
-                            split_json = clean_and_parse(match.group(1))
-                            final_result.update(split_json)
-                            print("Successfully parsed Splitting JSON from markdown.")
-                        except:
-                            final_result["场景切分与建议"] = split_content
-                    else:
-                        try:
-                            split_json = clean_and_parse(split_content)
-                            final_result.update(split_json)
-                            print("Successfully parsed Splitting JSON directly after aggressive cleaning.")
-                        except:
-                            final_result["场景切分与建议"] = split_content
+                else:
+                    print("Failed to parse Splitting JSON, saving raw text.")
+                    final_result["场景切分与建议"] = split_content
             else:
                 print("Failed to extract splitting info.")
 
@@ -441,13 +327,29 @@ def extract_storyline():
         import re
         book_title = re.sub(r'[\\/*?:"<>|]', "", book_title)
         
-        output_file_path = os.path.join(r"e:\worksapce\short_stories\writer", f"{book_title}.json")
+        # 获取大纲目录路径
+        writer_dir = os.path.dirname(os.path.abspath(__file__))
+        outline_dir = os.path.join(writer_dir, "大纲")
+        if not os.path.exists(outline_dir):
+            os.makedirs(outline_dir)
+            
+        output_file_path = os.path.join(outline_dir, f"{book_title}.json")
         with open(output_file_path, "w", encoding="utf-8") as f:
             json.dump(final_result, f, ensure_ascii=False, indent=2)
-        print(f"Success! Final combined JSON written to {book_title}.json")
+        print(f"Success! Final combined JSON written to {output_file_path}")
+        return output_file_path
             
     else:
         print("Failed to extract storyline.")
+        return None
 
 if __name__ == "__main__":
-    extract_storyline()
+    import sys
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Novel Extractor")
+    parser.add_argument("txt_path", nargs="?", default=r"e:\worksapce\short_stories\writer\《DNA骗局：总裁的契约娇妻》.txt", help="Path to the input TXT file")
+    
+    args = parser.parse_args()
+    
+    extract_storyline(args.txt_path)

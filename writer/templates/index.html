@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>灼见短篇 - 小说创作工作台</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: #f8fafc; /* slate-50 */
+        }
+        
+        /* 隐藏滚动条但保留滚动功能 */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+
+        .panel {
+            display: none;
+            animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        
+        .panel.active {
+            display: block;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        /* Toast notification */
+        .toast {
+            position: fixed;
+            top: 24px;
+            right: 24px;
+            transform: translateX(150%);
+            transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+            z-index: 50;
+        }
+        
+        .toast.show {
+            transform: translateX(0);
+        }
+    </style>
+</head>
+<body class="text-slate-800 antialiased h-screen flex flex-col overflow-hidden">
+
+<div class="flex flex-col h-full">
+    <!-- 顶部导航栏 -->
+    <header class="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-6 flex-shrink-0 z-20">
+        <div class="flex items-center gap-3">
+            <div class="bg-blue-600 p-1.5 rounded-lg">
+                <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path>
+                </svg>
+            </div>
+            <span class="text-xl font-bold text-slate-800 tracking-tight">灼见短篇</span>
+            <span class="bg-blue-50 text-blue-600 text-xs font-semibold px-2.5 py-0.5 rounded-full ml-2 border border-blue-100">Beta</span>
+        </div>
+        <div class="flex items-center gap-4">
+            <button class="text-slate-400 hover:text-slate-600 transition-colors">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+            </button>
+            <div class="w-8 h-8 bg-gradient-to-tr from-blue-500 to-indigo-500 rounded-full shadow-sm border-2 border-white"></div>
+        </div>
+    </header>
+
+    <div class="flex flex-1 overflow-hidden relative">
+        <!-- 左侧侧边栏 -->
+        <aside class="w-64 bg-white border-r border-slate-200 flex flex-col py-6 px-3 flex-shrink-0 z-10">
+            <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-4 px-3">工作台</div>
+            <nav class="space-y-1">
+                <button class="nav-item active w-full flex items-center gap-3 px-3 py-2.5 rounded-lg bg-blue-50 text-blue-700 transition-all font-medium text-sm group" data-target="extract-panel">
+                    <svg class="w-5 h-5 text-blue-600 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path></svg>
+                    提取大纲
+                </button>
+                <button class="nav-item w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-all font-medium text-sm group" data-target="write-panel">
+                    <svg class="w-5 h-5 text-slate-400 group-hover:text-blue-500 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+                    生成小说
+                </button>
+            </nav>
+
+            <div class="mt-8 text-xs font-semibold text-slate-400 uppercase tracking-wider mb-4 px-3">系统</div>
+            <nav class="space-y-1">
+                <button class="nav-item w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-all font-medium text-sm group" data-target="config-panel">
+                    <svg class="w-5 h-5 text-slate-400 group-hover:text-blue-500 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                    基本配置
+                </button>
+            </nav>
+            
+            <!-- 底部信息 -->
+            <div class="mt-auto px-3 pb-2">
+                <div class="bg-slate-50 p-3 rounded-lg border border-slate-100">
+                    <p class="text-xs text-slate-500 leading-relaxed">
+                        本地运行环境<br>
+                        <span class="text-slate-400">v1.0.0</span>
+                    </p>
+                </div>
+            </div>
+        </aside>
+
+        <!-- 右侧主内容区 -->
+        <main class="flex-1 overflow-hidden bg-slate-50/50 relative flex flex-col">
+            
+            <div class="flex-1 w-full h-full relative">
+                <!-- 提取大纲面板 (使用 iframe 嵌入新页面以保持代码整洁) -->
+                <div id="extract-panel" class="panel active w-full h-full p-0">
+                    <iframe src="/extract" class="w-full h-full border-0"></iframe>
+                </div>
+
+                <!-- 生成小说面板 -->
+                <div id="write-panel" class="panel w-full h-full p-0">
+                    <iframe src="/write" class="w-full h-full border-0"></iframe>
+                </div>
+
+                <!-- 基本配置面板 -->
+                <div id="config-panel" class="panel p-8 max-w-4xl mx-auto w-full h-full overflow-y-auto">
+                    <div class="mb-8">
+                        <h2 class="text-2xl font-bold text-slate-800 tracking-tight">基本配置</h2>
+                        <p class="text-slate-500 mt-2">管理 API 密钥和模型设置，配置将全局生效。</p>
+                    </div>
+                    
+                    <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                        <!-- 提示信息区 -->
+                        <div class="bg-blue-50/50 border-b border-blue-100 px-8 py-5 flex items-start gap-4">
+                            <div class="bg-blue-100 p-2 rounded-lg flex-shrink-0 mt-0.5">
+                                <svg class="h-5 w-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
+                            </div>
+                            <div>
+                                <h4 class="text-sm font-semibold text-blue-900">配置文件存储</h4>
+                                <p class="text-sm text-blue-700 mt-1 leading-relaxed">
+                                    修改此处的配置会直接更新本地的 <code class="bg-blue-100/50 text-blue-800 px-1.5 py-0.5 rounded border border-blue-200 font-mono text-xs">writer/config.json</code> 文件。所有脚本在运行时都会读取此最新配置。
+                                </p>
+                            </div>
+                        </div>
+
+                        <!-- 表单区 -->
+                        <div class="p-8">
+                            <form id="configForm" class="space-y-6">
+                                
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    <div class="space-y-2 md:col-span-2">
+                                        <label class="block text-sm font-semibold text-slate-700" for="api_key">API Key</label>
+                                        <div class="relative">
+                                            <input type="password" id="api_key" name="api_key" class="w-full pl-4 pr-10 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-slate-800 font-mono" placeholder="sk-..." required>
+                                            <button type="button" id="togglePassword" class="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600">
+                                                <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                                </svg>
+                                            </button>
+                                        </div>
+                                        <p class="text-xs text-slate-500">用于请求大模型的认证密钥（如阿里云 DashScope API Key）</p>
+                                    </div>
+                                    
+                                    <div class="space-y-2 md:col-span-2">
+                                        <label class="block text-sm font-semibold text-slate-700" for="base_url">Base URL</label>
+                                        <input type="text" id="base_url" name="base_url" class="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-slate-800 font-mono" placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1" required>
+                                        <p class="text-xs text-slate-500">API 基础请求地址，支持 OpenAI 兼容格式</p>
+                                    </div>
+                                    
+                                    <div class="space-y-2 md:col-span-1">
+                                        <label class="block text-sm font-semibold text-slate-700" for="model">Model 名称</label>
+                                        <input type="text" id="model" name="model" class="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-slate-800 font-mono" placeholder="qwen3.5-plus" required>
+                                        <p class="text-xs text-slate-500">推荐使用 qwen-max 或 qwen3.5-plus</p>
+                                    </div>
+                                </div>
+                                
+                                <div class="pt-6 border-t border-slate-100 flex items-center gap-4">
+                                    <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-xl font-medium text-sm shadow-sm hover:shadow transition-all flex items-center gap-2 transform active:scale-[0.98]" id="saveBtn">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"></path></svg>
+                                        保存配置
+                                    </button>
+                                    
+                                    <div id="saveStatus" class="hidden items-center gap-2 text-sm text-slate-500 font-medium">
+                                        <svg class="animate-spin h-4 w-4 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                        </svg>
+                                        正在保存...
+                                    </div>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+        </main>
+    </div>
+</div>
+
+<!-- Toast 通知 -->
+<div id="toast" class="toast bg-white border border-slate-200 shadow-lg rounded-xl p-4 flex items-start gap-3 w-80">
+    <div id="toastIconWrapper" class="flex-shrink-0 mt-0.5 rounded-full p-1 bg-green-100 text-green-600">
+        <svg id="toastIcon" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+    </div>
+    <div class="flex-1">
+        <h4 id="toastTitle" class="text-sm font-semibold text-slate-800">操作成功</h4>
+        <p id="toastMessage" class="text-xs text-slate-500 mt-1 leading-relaxed">配置已保存并生效</p>
+    </div>
+</div>
+
+<script>
+    // 侧边栏导航切换逻辑
+    const navItems = document.querySelectorAll('.nav-item');
+    const panels = document.querySelectorAll('.panel');
+
+    navItems.forEach(item => {
+        item.addEventListener('click', () => {
+            // 移除所有 active 状态及相关样式
+            navItems.forEach(nav => {
+                nav.classList.remove('active', 'bg-blue-50', 'text-blue-700');
+                nav.classList.add('text-slate-600', 'hover:bg-slate-50', 'hover:text-slate-900');
+                nav.querySelector('svg').classList.remove('text-blue-600');
+                nav.querySelector('svg').classList.add('text-slate-400');
+            });
+            panels.forEach(panel => panel.classList.remove('active'));
+            
+            // 添加当前 active 状态
+            item.classList.add('active', 'bg-blue-50', 'text-blue-700');
+            item.classList.remove('text-slate-600', 'hover:bg-slate-50', 'hover:text-slate-900');
+            item.querySelector('svg').classList.add('text-blue-600');
+            item.querySelector('svg').classList.remove('text-slate-400');
+            
+            const targetId = item.getAttribute('data-target');
+            document.getElementById(targetId).classList.add('active');
+        });
+    });
+
+    // 密码可见性切换
+    const togglePassword = document.getElementById('togglePassword');
+    const apiKeyInput = document.getElementById('api_key');
+    
+    togglePassword.addEventListener('click', () => {
+        const type = apiKeyInput.getAttribute('type') === 'password' ? 'text' : 'password';
+        apiKeyInput.setAttribute('type', type);
+        
+        // 切换图标
+        if (type === 'text') {
+            togglePassword.innerHTML = `<svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.29 3.29m0 0a9.97 9.97 0 013.029-1.563c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0l-3.29-3.29" /></svg>`;
+        } else {
+            togglePassword.innerHTML = `<svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>`;
+        }
+    });
+
+    // API Base URL (使用相对路径以适应任何宿主环境)
+    const API_BASE = '/api';
+    let toastTimeout;
+
+    // Toast 提示工具函数
+    function showToast(title, message, isError = false) {
+        const toast = document.getElementById('toast');
+        const toastTitle = document.getElementById('toastTitle');
+        const toastMessage = document.getElementById('toastMessage');
+        const toastIconWrapper = document.getElementById('toastIconWrapper');
+        const toastIcon = document.getElementById('toastIcon');
+        
+        toastTitle.textContent = title;
+        toastMessage.textContent = message;
+        
+        if (isError) {
+            toastIconWrapper.className = 'flex-shrink-0 mt-0.5 rounded-full p-1 bg-red-100 text-red-600';
+            toastIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>';
+        } else {
+            toastIconWrapper.className = 'flex-shrink-0 mt-0.5 rounded-full p-1 bg-green-100 text-green-600';
+            toastIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>';
+        }
+        
+        clearTimeout(toastTimeout);
+        toast.classList.add('show');
+        
+        toastTimeout = setTimeout(() => {
+            toast.classList.remove('show');
+        }, 3500);
+    }
+
+    // 页面加载时获取配置
+    async function loadConfig() {
+        try {
+            const response = await fetch(`${API_BASE}/config`);
+            if (response.ok) {
+                const config = await response.json();
+                document.getElementById('api_key').value = config.api_key || '';
+                document.getElementById('base_url').value = config.base_url || 'https://dashscope.aliyuncs.com/compatible-mode/v1';
+                document.getElementById('model').value = config.model || 'qwen3.5-plus';
+            } else {
+                console.error("Failed to load config");
+            }
+        } catch (error) {
+            console.error("Error loading config:", error);
+            showToast("连接失败", "无法连接到后端服务，请确保已启动 Python 服务", true);
+        }
+    }
+
+    // 表单提交保存配置
+    document.getElementById('configForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        
+        const saveBtn = document.getElementById('saveBtn');
+        const saveStatus = document.getElementById('saveStatus');
+        
+        // UI 状态切换
+        saveBtn.classList.add('hidden');
+        saveStatus.classList.remove('hidden');
+        saveStatus.classList.add('flex');
+        
+        const configData = {
+            api_key: document.getElementById('api_key').value,
+            base_url: document.getElementById('base_url').value,
+            model: document.getElementById('model').value
+        };
+        
+        try {
+            const response = await fetch(`${API_BASE}/config`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(configData)
+            });
+            
+            if (response.ok) {
+                showToast("保存成功", "API 配置已成功更新并保存到本地。");
+            } else {
+                const err = await response.json();
+                showToast("保存失败", err.error || "发生了未知错误", true);
+            }
+        } catch (error) {
+            console.error("Error saving config:", error);
+            showToast("保存失败", "无法连接到后端服务", true);
+        } finally {
+            // 恢复 UI 状态
+            saveBtn.classList.remove('hidden');
+            saveStatus.classList.add('hidden');
+            saveStatus.classList.remove('flex');
+        }
+    });
+
+    // 初始加载
+    loadConfig();
+</script>
+
+</body>
+</html>

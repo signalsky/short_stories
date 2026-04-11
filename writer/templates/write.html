@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>生成小说 - 灼见短篇</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: #f8fafc;
+        }
+        
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+
+        .toast {
+            position: fixed;
+            top: 24px;
+            right: 24px;
+            transform: translateX(150%);
+            transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+            z-index: 50;
+        }
+        .toast.show {
+            transform: translateX(0);
+        }
+
+        .loader {
+            border-top-color: #3b82f6;
+            -webkit-animation: spinner 1.5s linear infinite;
+            animation: spinner 1.5s linear infinite;
+        }
+        @keyframes spinner {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .json-field {
+            transition: all 0.2s;
+        }
+        .json-field.editing {
+            border-color: #3b82f6;
+            background-color: #fff;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+        .json-field.readonly {
+            background-color: #f8fafc;
+            border-color: transparent;
+            resize: none;
+        }
+    </style>
+</head>
+<body class="text-slate-800 antialiased h-screen flex overflow-hidden">
+
+    <!-- 左侧边栏 -->
+    <aside class="w-72 bg-white border-r border-slate-200 flex flex-col h-full flex-shrink-0 z-10 shadow-sm">
+        <div class="p-4 border-b border-slate-100">
+            <button id="btnNewGenerate" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2.5 rounded-xl font-medium text-sm shadow-sm hover:shadow transition-all flex items-center justify-center gap-2 transform active:scale-[0.98]">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                新建小说生成
+            </button>
+        </div>
+        
+        <div class="p-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">
+            生成进度
+        </div>
+        
+        <div id="rewriteList" class="flex-1 overflow-y-auto p-2 space-y-1 no-scrollbar">
+            <div class="text-center py-4 text-slate-400 text-sm italic">加载中...</div>
+        </div>
+    </aside>
+
+    <!-- 右侧主内容区 -->
+    <main class="flex-1 flex flex-col h-full relative bg-slate-50">
+        
+        <header class="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-6 flex-shrink-0">
+            <h2 id="mainTitle" class="text-lg font-bold text-slate-800 tracking-tight">请选择或新建生成任务</h2>
+            <div id="toolbar" class="hidden items-center gap-3">
+                <button id="btnEdit" class="text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+                    编辑内容
+                </button>
+                <button id="btnSave" class="hidden bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-1.5 rounded-lg text-sm font-medium shadow-sm transition-colors flex items-center gap-1">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                    保存修改
+                </button>
+            </div>
+        </header>
+
+        <!-- 滚动内容区 -->
+        <div class="flex-1 overflow-y-auto p-8 relative">
+            
+            <!-- 视图 1：新建生成面板 -->
+            <div id="viewCreate" class="max-w-2xl mx-auto hidden">
+                <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-8">
+                    <h3 class="text-xl font-bold text-slate-800 mb-2">新建生成任务</h3>
+                    <p class="text-slate-500 text-sm mb-8">请从已提取的大纲中选择一本，系统将根据大纲的场景切分，逐段生成全新的小说内容。</p>
+                    
+                    <form id="generateForm" class="space-y-6">
+                        <div class="space-y-2">
+                            <label class="block text-sm font-semibold text-slate-700" for="outlineSelect">选择大纲</label>
+                            <div class="relative">
+                                <select id="outlineSelect" required class="w-full pl-4 pr-10 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-slate-800 appearance-none">
+                                    <option value="" disabled selected>加载中...</option>
+                                </select>
+                                <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-slate-500">
+                                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="flex items-center justify-end pt-4">
+                            <button type="submit" id="btnSubmitGenerate" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-xl font-medium text-sm shadow-sm transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                                开始生成
+                            </button>
+                        </div>
+                    </form>
+
+                    <!-- 生成进度提示 -->
+                    <div id="generatingStatus" class="hidden mt-8 p-6 bg-indigo-50 rounded-xl border border-indigo-100 text-center">
+                        <div class="loader ease-linear rounded-full border-4 border-t-4 border-indigo-200 h-10 w-10 mx-auto mb-4"></div>
+                        <h4 class="text-indigo-800 font-medium">正在调用大模型生成小说...</h4>
+                        <p class="text-indigo-600 text-xs mt-2 leading-relaxed">长篇内容生成可能需要数分钟到十几分钟。<br>后端支持断点续写，如果意外中断，重新生成即可继续。</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 视图 2：生成进度展示/编辑面板 -->
+            <div id="viewEditor" class="max-w-5xl mx-auto hidden pb-20">
+                <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                    <div class="p-6 md:p-8 space-y-8" id="editorContainer">
+                        <!-- 动态渲染字段区 -->
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 视图 3：欢迎空状态 -->
+            <div id="viewEmpty" class="h-full flex flex-col items-center justify-center text-center">
+                <div class="w-24 h-24 bg-slate-100 rounded-full flex items-center justify-center mb-6">
+                    <svg class="w-12 h-12 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
+                </div>
+                <h3 class="text-xl font-bold text-slate-700">欢迎使用生成小说功能</h3>
+                <p class="mt-2 text-slate-500 max-w-md">在左侧查看历史生成进度，或点击“新建”根据大纲生成新小说。</p>
+            </div>
+
+        </div>
+    </main>
+
+    <!-- 单段重写弹窗 -->
+    <div id="rewriteModal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 hidden flex items-center justify-center opacity-0 transition-opacity duration-300">
+        <div class="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-2xl overflow-hidden transform scale-95 transition-transform duration-300" id="rewriteModalContent">
+            <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                <h3 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+                    <svg class="w-5 h-5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                    重新生成此段
+                </h3>
+                <button id="btnCloseModal" class="text-slate-400 hover:text-slate-600 transition-colors">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+            
+            <div class="p-6 space-y-6">
+                <div class="space-y-2">
+                    <label class="block text-sm font-semibold text-slate-700">前文参考范围</label>
+                    <select id="rewriteContextSelect" class="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-slate-800">
+                        <option value="2">默认：参考前两段</option>
+                        <option value="1">参考前一段</option>
+                        <option value="0">不参考前文</option>
+                    </select>
+                    <p class="text-xs text-slate-500 mt-1">注：如果是第一段，无论选什么都不会有前文参考；如果是第二段，最多只能参考前一段。</p>
+                </div>
+                
+                <div class="space-y-2">
+                    <label class="block text-sm font-semibold text-slate-700">修改建议 (可选)</label>
+                    <textarea id="rewriteInstruction" rows="12" placeholder="例如：请多加一些女主手部颤抖的动作描写，语气再强硬一点..." class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-slate-800 leading-relaxed resize-y"></textarea>
+                    <p class="text-xs text-slate-500 mt-1">💡 提示：本场景的【核心细纲】、【情绪要求】和【目标字数】等参数，后端会自动从 JSON 中读取并默认传入大模型，您无需在此处重复输入，只需填写额外的修改要求即可。</p>
+                </div>
+            </div>
+            
+            <div class="px-6 py-4 border-t border-slate-100 bg-slate-50 flex items-center justify-end gap-3">
+                <button id="btnCancelModal" class="px-5 py-2.5 rounded-xl font-medium text-sm text-slate-600 hover:bg-slate-200 transition-colors">取消</button>
+                <button id="btnConfirmRewrite" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-xl font-medium text-sm shadow-sm transition-all flex items-center gap-2">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                    开始重写
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast 通知 -->
+    <div id="toast" class="toast bg-white border border-slate-200 shadow-lg rounded-xl p-4 flex items-start gap-3 w-80">
+        <div id="toastIconWrapper" class="flex-shrink-0 mt-0.5 rounded-full p-1 bg-green-100 text-green-600">
+            <svg id="toastIcon" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+        </div>
+        <div class="flex-1">
+            <h4 id="toastTitle" class="text-sm font-semibold text-slate-800">操作成功</h4>
+            <p id="toastMessage" class="text-xs text-slate-500 mt-1 leading-relaxed">...</p>
+        </div>
+    </div>
+
+    <script>
+        // DOM 元素
+        const rewriteList = document.getElementById('rewriteList');
+        const viewCreate = document.getElementById('viewCreate');
+        const viewEditor = document.getElementById('viewEditor');
+        const viewEmpty = document.getElementById('viewEmpty');
+        const mainTitle = document.getElementById('mainTitle');
+        const toolbar = document.getElementById('toolbar');
+        
+        const btnNewGenerate = document.getElementById('btnNewGenerate');
+        const outlineSelect = document.getElementById('outlineSelect');
+        const generateForm = document.getElementById('generateForm');
+        const btnSubmitGenerate = document.getElementById('btnSubmitGenerate');
+        const generatingStatus = document.getElementById('generatingStatus');
+        
+        const btnEdit = document.getElementById('btnEdit');
+        const btnSave = document.getElementById('btnSave');
+        const editorContainer = document.getElementById('editorContainer');
+        
+        // 弹窗 DOM
+        const rewriteModal = document.getElementById('rewriteModal');
+        const rewriteModalContent = document.getElementById('rewriteModalContent');
+        const btnCloseModal = document.getElementById('btnCloseModal');
+        const btnCancelModal = document.getElementById('btnCancelModal');
+        const btnConfirmRewrite = document.getElementById('btnConfirmRewrite');
+        const rewriteContextSelect = document.getElementById('rewriteContextSelect');
+        const rewriteInstruction = document.getElementById('rewriteInstruction');
+
+        let currentFilename = null;
+        let currentJsonData = null;
+        let isEditing = false;
+        let currentRewriteSceneIndex = -1;
+
+        // Toast 提示
+        let toastTimeout;
+        function showToast(title, message, isError = false) {
+            const toast = document.getElementById('toast');
+            const toastTitle = document.getElementById('toastTitle');
+            const toastMessage = document.getElementById('toastMessage');
+            const toastIconWrapper = document.getElementById('toastIconWrapper');
+            const toastIcon = document.getElementById('toastIcon');
+            
+            toastTitle.textContent = title;
+            toastMessage.textContent = message;
+            
+            if (isError) {
+                toastIconWrapper.className = 'flex-shrink-0 mt-0.5 rounded-full p-1 bg-red-100 text-red-600';
+                toastIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>';
+            } else {
+                toastIconWrapper.className = 'flex-shrink-0 mt-0.5 rounded-full p-1 bg-green-100 text-green-600';
+                toastIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>';
+            }
+            
+            clearTimeout(toastTimeout);
+            toast.classList.add('show');
+            toastTimeout = setTimeout(() => toast.classList.remove('show'), 3500);
+        }
+
+        // 切换视图
+        function switchView(view) {
+            viewCreate.classList.add('hidden');
+            viewEditor.classList.add('hidden');
+            viewEmpty.classList.add('hidden');
+            toolbar.classList.add('hidden');
+            
+            document.querySelectorAll('#rewriteList button').forEach(b => {
+                b.classList.remove('bg-indigo-50', 'text-indigo-700', 'border-indigo-500');
+                b.classList.add('text-slate-600', 'border-transparent');
+            });
+
+            if (view === 'create') {
+                viewCreate.classList.remove('hidden');
+                mainTitle.textContent = "新建小说生成";
+                loadOutlineOptions();
+            } else if (view === 'editor') {
+                viewEditor.classList.remove('hidden');
+                toolbar.classList.remove('hidden');
+                toolbar.classList.add('flex');
+            } else {
+                viewEmpty.classList.remove('hidden');
+                mainTitle.textContent = "请选择或新建生成任务";
+            }
+        }
+
+        // 获取左侧重写进度列表
+        async function fetchRewrites() {
+            try {
+                const res = await fetch('/api/rewrites');
+                const files = await res.json();
+                
+                rewriteList.innerHTML = '';
+                if (files.length === 0) {
+                    rewriteList.innerHTML = '<div class="text-center py-4 text-slate-400 text-sm">暂无数据</div>';
+                    return;
+                }
+
+                files.forEach(file => {
+                    const nameWithoutExt = file.replace('_进度.json', '');
+                    const btn = document.createElement('button');
+                    btn.className = `w-full text-left px-3 py-2.5 rounded-lg text-sm font-medium border-l-2 border-transparent text-slate-600 hover:bg-slate-50 transition-all truncate`;
+                    btn.textContent = nameWithoutExt;
+                    btn.dataset.filename = file;
+                    btn.title = nameWithoutExt;
+                    
+                    btn.onclick = () => loadRewrite(file, btn);
+                    rewriteList.appendChild(btn);
+                });
+                
+                if (currentFilename) {
+                    const activeBtn = document.querySelector(`button[data-filename="${currentFilename}"]`);
+                    if (activeBtn) highlightSidebarItem(activeBtn);
+                }
+
+            } catch (err) {
+                console.error("Failed to fetch rewrites:", err);
+                rewriteList.innerHTML = '<div class="text-center py-4 text-red-400 text-sm">加载失败</div>';
+            }
+        }
+
+        // 获取大纲下拉列表
+        async function loadOutlineOptions() {
+            try {
+                const res = await fetch('/api/outlines');
+                const files = await res.json();
+                
+                outlineSelect.innerHTML = '<option value="" disabled selected>-- 请选择一个大纲文件 --</option>';
+                files.forEach(file => {
+                    const opt = document.createElement('option');
+                    opt.value = file;
+                    opt.textContent = file.replace('.json', '');
+                    outlineSelect.appendChild(opt);
+                });
+            } catch (err) {
+                outlineSelect.innerHTML = '<option value="" disabled>加载失败，请刷新重试</option>';
+            }
+        }
+
+        function highlightSidebarItem(btn) {
+            document.querySelectorAll('#rewriteList button').forEach(b => {
+                b.classList.remove('bg-indigo-50', 'text-indigo-700', 'border-indigo-500');
+                b.classList.add('text-slate-600', 'border-transparent');
+            });
+            btn.classList.add('bg-indigo-50', 'text-indigo-700', 'border-indigo-500');
+            btn.classList.remove('text-slate-600', 'border-transparent');
+        }
+
+        // 加载单个进度内容
+        async function loadRewrite(filename, btnElement) {
+            try {
+                const res = await fetch(`/api/rewrites/${filename}`);
+                if (!res.ok) throw new Error("获取文件失败");
+                
+                currentJsonData = await res.json();
+                currentFilename = filename;
+                
+                mainTitle.textContent = filename.replace('_进度.json', '');
+                highlightSidebarItem(btnElement);
+                
+                renderEditor(currentJsonData);
+                setEditMode(false);
+                switchView('editor');
+                
+            } catch (err) {
+                showToast("错误", err.message, true);
+            }
+        }
+
+        // 将 JSON 渲染为带有重写按钮的卡片
+        function renderEditor(data) {
+            editorContainer.innerHTML = '';
+            
+            // 1. 渲染角色命名映射
+            if (data['name_map']) {
+                const nameCard = createCard('角色命名映射');
+                const grid = document.createElement('div');
+                grid.className = 'grid grid-cols-2 md:grid-cols-4 gap-4';
+                for (const [role, name] of Object.entries(data['name_map'])) {
+                    grid.appendChild(createField(role, name, `name_map.${role}`, true));
+                }
+                nameCard.appendChild(grid);
+                editorContainer.appendChild(nameCard);
+            }
+            
+            // 2. 渲染生成的段落和对应的细纲
+            const paragraphs = data['generated_paragraphs'] || [];
+            const outlines = data['rewritten_outlines'] || {};
+            const outlineKeys = Object.keys(outlines); // 用于按顺序匹配细纲
+            
+            if (paragraphs.length > 0 || outlineKeys.length > 0) {
+                const contentCard = createCard('小说正文内容');
+                
+                const maxLength = Math.max(paragraphs.length, outlineKeys.length);
+                
+                for (let i = 0; i < maxLength; i++) {
+                    const block = document.createElement('div');
+                    block.className = 'mb-6 p-5 bg-white rounded-xl border border-slate-200 shadow-sm relative group';
+                    
+                    const sceneName = outlineKeys[i] || `场景 ${i+1}`;
+                    const outlineText = outlines[sceneName] || '（无对应细纲）';
+                    const paragraphText = paragraphs[i] || '【待生成】';
+                    
+                    // 场景标题栏
+                    const header = document.createElement('div');
+                    header.className = 'flex items-center justify-between mb-4 pb-3 border-b border-slate-100';
+                    header.innerHTML = `<h5 class="font-bold text-slate-800 flex items-center gap-2"><span class="bg-indigo-100 text-indigo-700 w-6 h-6 rounded-full flex items-center justify-center text-xs">${i+1}</span>${sceneName}</h5>`;
+                    
+                    // 重写按钮
+                    const rewriteBtn = document.createElement('button');
+                    rewriteBtn.className = 'text-xs bg-white border border-indigo-200 text-indigo-600 hover:bg-indigo-50 px-3 py-1.5 rounded-lg flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity';
+                    rewriteBtn.innerHTML = `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg> 重新生成此段`;
+                    rewriteBtn.onclick = () => openRewriteModal(i);
+                    
+                    header.appendChild(rewriteBtn);
+                    block.appendChild(header);
+                    
+                    // 细纲部分
+                    const outlineDiv = document.createElement('div');
+                    outlineDiv.className = 'mb-4 bg-slate-50 p-3 rounded-lg border border-slate-100';
+                    outlineDiv.innerHTML = `<div class="text-xs font-semibold text-slate-500 mb-1">重构细纲：</div>`;
+                    outlineDiv.appendChild(createField('', outlineText, `rewritten_outlines.${sceneName}`, false, true));
+                    block.appendChild(outlineDiv);
+                    
+                    // 正文部分
+                    const paraDiv = document.createElement('div');
+                    paraDiv.innerHTML = `<div class="text-xs font-semibold text-indigo-500 mb-1 pl-1">生成正文：</div>`;
+                    paraDiv.appendChild(createField('', paragraphText, `generated_paragraphs.${i}`, false, true));
+                    block.appendChild(paraDiv);
+                    
+                    contentCard.appendChild(block);
+                }
+                editorContainer.appendChild(contentCard);
+            }
+            
+            // 触发一次高度自适应
+            setTimeout(() => {
+                document.querySelectorAll('textarea').forEach(ta => {
+                    ta.style.height = 'auto';
+                    ta.style.height = (ta.scrollHeight) + 'px';
+                });
+            }, 10);
+        }
+        
+        // 辅助函数
+        function createCard(title) {
+            const card = document.createElement('div');
+            card.className = 'mb-8';
+            const h4 = document.createElement('h4');
+            h4.className = 'text-lg font-bold text-slate-800 mb-4 flex items-center gap-2';
+            h4.innerHTML = `<span class="w-1.5 h-5 bg-indigo-500 rounded-full inline-block"></span>${title}`;
+            card.appendChild(h4);
+            return card;
+        }
+        
+        function createField(labelStr, value, keyPath, compact = false, hideLabel = false) {
+            const wrapper = document.createElement('div');
+            wrapper.className = compact ? 'space-y-1' : 'space-y-1.5 w-full';
+            
+            if (!hideLabel) {
+                const label = document.createElement('label');
+                label.className = 'block text-sm font-semibold text-slate-600';
+                label.textContent = labelStr;
+                wrapper.appendChild(label);
+            }
+            
+            let input;
+            let valStr = Array.isArray(value) ? JSON.stringify(value, null, 2) : value;
+            
+            if (typeof valStr === 'string' && (valStr.length > 40 || valStr.includes('\n'))) {
+                input = document.createElement('textarea');
+                input.rows = Math.min(Math.max(valStr.split('\n').length, 2), 15);
+                input.className = 'w-full px-3 py-2 rounded-lg text-sm text-slate-800 json-field readonly outline-none leading-relaxed border border-transparent';
+            } else {
+                input = document.createElement('input');
+                input.type = 'text';
+                input.className = 'w-full px-3 py-2 rounded-lg text-sm text-slate-800 json-field readonly outline-none border border-transparent';
+            }
+            
+            input.value = valStr;
+            input.dataset.keypath = keyPath;
+            input.readOnly = true;
+            
+            if (input.tagName === 'TEXTAREA') {
+                input.addEventListener('input', function() {
+                    this.style.height = 'auto';
+                    this.style.height = (this.scrollHeight) + 'px';
+                });
+            }
+            
+            wrapper.appendChild(input);
+            return wrapper;
+        }
+
+        // 切换编辑模式
+        function setEditMode(edit) {
+            isEditing = edit;
+            const fields = document.querySelectorAll('.json-field');
+            
+            if (edit) {
+                btnEdit.classList.add('hidden');
+                btnSave.classList.remove('hidden');
+                fields.forEach(f => {
+                    f.readOnly = false;
+                    f.classList.remove('readonly');
+                    f.classList.add('editing');
+                });
+            } else {
+                btnEdit.classList.remove('hidden');
+                btnSave.classList.add('hidden');
+                fields.forEach(f => {
+                    f.readOnly = true;
+                    f.classList.add('readonly');
+                    f.classList.remove('editing');
+                });
+            }
+        }
+
+        // 保存编辑
+        async function saveChanges() {
+            const fields = document.querySelectorAll('.json-field');
+            let newData = JSON.parse(JSON.stringify(currentJsonData));
+            
+            fields.forEach(f => {
+                const keyPath = f.dataset.keypath.split('.');
+                let current = newData;
+                
+                for (let i = 0; i < keyPath.length - 1; i++) {
+                    current = current[keyPath[i]];
+                }
+                
+                const lastKey = keyPath[keyPath.length - 1];
+                current[lastKey] = f.value;
+            });
+
+            try {
+                const btn = document.getElementById('btnSave');
+                btn.innerHTML = `<svg class="animate-spin w-4 h-4 mr-1" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> 保存中...`;
+                btn.disabled = true;
+
+                const res = await fetch(`/api/rewrites/${currentFilename}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(newData)
+                });
+
+                if (!res.ok) throw new Error("保存失败");
+
+                currentJsonData = newData;
+                setEditMode(false);
+                showToast("保存成功", "小说内容已更新，对应的 TXT 文件已同步生成");
+
+            } catch (err) {
+                showToast("错误", err.message, true);
+            } finally {
+                const btn = document.getElementById('btnSave');
+                btn.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> 保存修改`;
+                btn.disabled = false;
+            }
+        }
+
+        // 生成表单提交
+        generateForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const outlineFile = outlineSelect.value;
+            if (!outlineFile) return;
+
+            btnSubmitGenerate.disabled = true;
+            btnSubmitGenerate.innerHTML = `生成中...`;
+            generatingStatus.classList.remove('hidden');
+
+            try {
+                const res = await fetch('/api/generate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ outline_filename: outlineFile })
+                });
+
+                const result = await res.json();
+                if (!res.ok) throw new Error(result.error || "生成失败");
+
+                showToast("生成成功", "小说已生成完毕");
+                await fetchRewrites(); // 刷新列表
+                
+                // 选中刚生成的文件
+                if (result.progress_file) {
+                    const newBtn = rewriteList.querySelector(`button[data-filename="${result.progress_file}"]`);
+                    if (newBtn) newBtn.click();
+                }
+
+            } catch (err) {
+                showToast("生成失败", err.message, true);
+                console.error(err);
+            } finally {
+                btnSubmitGenerate.disabled = false;
+                btnSubmitGenerate.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg> 开始生成`;
+                generatingStatus.classList.add('hidden');
+            }
+        });
+
+        // 单段重写功能
+        function openRewriteModal(sceneIndex) {
+            currentRewriteSceneIndex = sceneIndex;
+            
+            // 重置表单
+            rewriteInstruction.value = "";
+            
+            // 根据段落索引动态设置可选的前文参考范围
+            Array.from(rewriteContextSelect.options).forEach(opt => opt.disabled = false);
+            
+            if (sceneIndex === 0) {
+                // 第一段：不能参考前文
+                rewriteContextSelect.value = "0";
+                Array.from(rewriteContextSelect.options).forEach(opt => {
+                    if (opt.value !== "0") opt.disabled = true;
+                });
+            } else if (sceneIndex === 1) {
+                // 第二段：最多参考一段
+                rewriteContextSelect.value = "1";
+                Array.from(rewriteContextSelect.options).forEach(opt => {
+                    if (opt.value === "2") opt.disabled = true;
+                });
+            } else {
+                // 其他：默认参考两段
+                rewriteContextSelect.value = "2";
+            }
+            
+            // 显示弹窗
+            rewriteModal.classList.remove('hidden');
+            // 触发动画
+            setTimeout(() => {
+                rewriteModal.classList.remove('opacity-0');
+                rewriteModalContent.classList.remove('scale-95');
+                rewriteModalContent.classList.add('scale-100');
+            }, 10);
+        }
+        
+        function closeRewriteModal() {
+            rewriteModal.classList.add('opacity-0');
+            rewriteModalContent.classList.remove('scale-100');
+            rewriteModalContent.classList.add('scale-95');
+            setTimeout(() => {
+                rewriteModal.classList.add('hidden');
+            }, 300);
+        }
+        
+        btnCloseModal.addEventListener('click', closeRewriteModal);
+        btnCancelModal.addEventListener('click', closeRewriteModal);
+        
+        btnConfirmRewrite.addEventListener('click', async () => {
+            const contextLevel = parseInt(rewriteContextSelect.value);
+            const instruction = rewriteInstruction.value.trim();
+            const sceneIndex = currentRewriteSceneIndex;
+            
+            if (sceneIndex < 0) return;
+            
+            btnConfirmRewrite.disabled = true;
+            btnConfirmRewrite.innerHTML = `<svg class="animate-spin w-4 h-4 mr-1" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> 重写中...`;
+            
+            try {
+                const res = await fetch('/api/rewrite_scene', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        filename: currentFilename,
+                        scene_index: sceneIndex,
+                        context_level: contextLevel,
+                        instruction: instruction
+                    })
+                });
+
+                const result = await res.json();
+                if (!res.ok) throw new Error(result.error || "单段重写失败");
+
+                showToast("重写成功", `第 ${sceneIndex + 1} 场景已重新生成并保存。`);
+                closeRewriteModal();
+                
+                // 重新加载该进度文件以刷新界面
+                const activeBtn = document.querySelector(`button[data-filename="${currentFilename}"]`);
+                loadRewrite(currentFilename, activeBtn);
+
+            } catch (err) {
+                showToast("重写失败", err.message, true);
+                console.error(err);
+            } finally {
+                btnConfirmRewrite.disabled = false;
+                btnConfirmRewrite.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg> 开始重写`;
+            }
+        });
+
+        // 绑定事件
+        btnNewGenerate.addEventListener('click', () => switchView('create'));
+        btnEdit.addEventListener('click', () => setEditMode(true));
+        btnSave.addEventListener('click', saveChanges);
+
+        // 初始加载
+        fetchRewrites();
+        switchView('empty');
+    </script>
+</body>
+</html>
