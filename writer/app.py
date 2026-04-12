@@ -8,6 +8,11 @@ import subprocess
 app = Flask(__name__)
 CORS(app)  # 允许跨域请求
 
+# 禁用 Flask 默认的 JSON 键排序，保证前端显示的顺序与文件一致
+app.config['JSON_SORT_KEYS'] = False
+if hasattr(app, 'json'):
+    app.json.sort_keys = False
+
 # 统一配置文件路径
 WRITER_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(WRITER_DIR, 'config.json')

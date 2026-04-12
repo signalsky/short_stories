@@ -53,69 +53,87 @@ def write_story(json_path, target_scene_index=None, context_level=2, user_instru
         except Exception as e:
             print(f"Failed to load existing progress: {e}")
     
-    # 3. 第一次 LLM 调用：为角色取名 & 重构防抄袭细纲
-    print("\n--- Step 1: Assigning real names to characters and rewriting outlines ---")
+    # 3. 第一次 LLM 调用：为角色取名，并将大纲/情绪点中的代称替换为真实姓名
+    print("\n--- Step 1: Assigning real names to characters ---")
     
-    if "name_map" in progress_data and "rewritten_outlines" in progress_data:
+    if "name_map" in progress_data and "rewritten_outlines" in progress_data and "rewritten_emotions" in progress_data:
         name_map = progress_data["name_map"]
         rewritten_outlines = progress_data["rewritten_outlines"]
-        print("Using cached names and outlines.")
+        rewritten_emotions = progress_data["rewritten_emotions"]
+        print("Using cached names, outlines, and emotions.")
     else:
         # 提取所有的旧细纲
         original_outlines = {k: v.get("剧情细纲", "") for k, v in scenes_dict.items() if isinstance(v, dict)}
         
-        naming_prompt = f'''你是一个专业的小说作者。我有一篇短篇小说的核心人物代称列表和各个场景的【原剧情细纲】。
+        # 提取原情绪点
+        original_emotions = emotions if isinstance(emotions, list) else []
+        
+        naming_prompt = f'''你是一个专业的小说作者。我有一篇小说的核心人物代称列表。
 
 【任务一：取名】
-请根据这些代称，为他们每个人取一个符合现代都市/言情小说风格的真实姓名。
+请根据这些代称，为他们每个人取一个符合该小说类型风格的真实姓名。
 核心人物列表：{json.dumps(core_characters, ensure_ascii=False)}
 
-【任务二：重构防抄袭细纲（非常重要！）】
-为了防止抄袭，我需要你把原本的【原剧情细纲】进行彻底的“洗稿换皮”。
-要求：
-1. 绝对保留原本细纲要表达的【核心情绪】和【剧情推进目的】（比如：目的是让女主难堪、目的是发现真相等）。
-2. 但是，必须彻底更换发生这些情绪的【具体场景、具体地点、具体事件起因】！
-   - 例如：原细纲是在“沙发上”见婆婆，你可以改成在“高档餐厅的包厢里”或者“家宴的餐桌上”。
-   - 例如：原细纲是“看手机热帖”，你可以改成“不小心听到亲戚议论”或者“无意中看到一份文件”。
-3. 重构后的细纲中，直接使用你刚刚为他们取好的真实姓名！
+【任务二：替换剧情细纲中的代称】
+请将以下【原剧情细纲】中出现的所有角色代称，全部替换为你刚刚为他们取好的真实姓名。
+细纲的剧情内容绝对不能有任何修改，仅仅替换名字！
+
+【任务三：替换情绪点中的代称】
+请将以下【原情绪点列表】中出现的所有角色代称，全部替换为你刚刚为他们取好的真实姓名。
+情绪点的内容绝对不能有任何修改，仅仅替换名字！
 
 【输出要求】：
-请务必只返回一个合法的 JSON 字典，包含 "角色姓名" 和 "重构细纲" 两个 Key。不要返回任何其他内容或 Markdown 标记。
+请务必只返回一个合法的 JSON 字典，包含 "角色姓名"、"重构细纲" 和 "重构情绪点" 三个 Key。不要返回任何其他内容或 Markdown 标记。
 
 示例：
 {{
   "角色姓名": {{
-    "女主": "苏念",
-    "男主": "陆泽",
-    "女主生母": "姜岚"
+    "女主": "",
+    "男主": "",
+    "女主生母": ""
   }},
   "重构细纲": {{
-    "原场景名1": "苏念刚走进高档餐厅包厢，姜岚便用极其挑剔的目光将她从头到脚扫视了一遍，苏念手心出汗，感到极度局促。",
-    "原场景名2": "苏念在整理陆泽的外套时，无意中从口袋里掉出一张医院的缴费单，震惊之余不小心碰倒了旁边的花瓶。"
-  }}
+    "原场景名1": "...",
+    "原场景名2": "..."
+  }},
+  "重构情绪点": [
+  ]
 }}
 
-【原剧情细纲（请逐一重构）】：
+【原剧情细纲】：
 {json.dumps(original_outlines, ensure_ascii=False, indent=2)}
+
+【原情绪点列表】：
+{json.dumps(original_emotions, ensure_ascii=False, indent=2)}
 '''
         name_response = call_dashscope_api(naming_prompt, system_prompt="你是一个专业的小说作者。")
         step1_data = clean_and_parse_json(name_response)
         
         name_map = {}
         rewritten_outlines = {}
+        rewritten_emotions = []
         
         if not step1_data or not isinstance(step1_data, dict):
-            print("Failed to get names and outlines from LLM, using fallback.")
+            print("Failed to get names from LLM, using fallback.")
             name_map = {role: f"[{role}的名字]" for role in core_characters}
             rewritten_outlines = original_outlines
+            rewritten_emotions = original_emotions
         else:
             name_map = step1_data.get("角色姓名", {})
-            rewritten_outlines = step1_data.get("重构细纲", {})
-            print(f"Successfully generated names and rewritten outlines.")
+            
+            # 根据原大纲的场景顺序，重新排序生成的 rewritten_outlines
+            raw_rewritten = step1_data.get("重构细纲", {})
+            rewritten_outlines = {k: raw_rewritten.get(k, original_outlines.get(k, "")) for k in original_outlines.keys()}
+            
+            # 获取重构后的情绪点
+            rewritten_emotions = step1_data.get("重构情绪点", original_emotions)
+            
+            print(f"Successfully generated names and replaced character names in outlines and emotions.")
         
         # 缓存第一步结果
         progress_data["name_map"] = name_map
         progress_data["rewritten_outlines"] = rewritten_outlines
+        progress_data["rewritten_emotions"] = rewritten_emotions
         progress_data["generated_paragraphs"] = progress_data.get("generated_paragraphs", [])
         
         with open(output_json_path, 'w', encoding='utf-8') as f:
@@ -135,21 +153,36 @@ def write_story(json_path, target_scene_index=None, context_level=2, user_instru
     public_context += f'''
 【完整故事线】：
 {json.dumps(storyline, ensure_ascii=False, indent=2)}
-
-【主要角色核心主线情绪】：
 '''
-    for role, role_data in emotions.items():
-        if isinstance(role_data, dict) and "核心主线" in role_data:
-            public_context += f"- {name_map.get(role, role)} ({role}): {role_data['核心主线']}\n"
+
+    # 添加结构优化建议
+    structure_advice = story_data.get("结构优化建议", "")
+    if structure_advice:
+        public_context += f'''
+【小说全局结构优化方向】：
+{structure_advice}
+'''
+
+    public_context += f'''
+【全局情绪点列表】：
+'''
+    if rewritten_emotions:
+        for emotion_point in rewritten_emotions:
+            public_context += f"- {emotion_point}\n"
+    elif isinstance(emotions, list):
+        for emotion_point in emotions:
+            public_context += f"- {emotion_point}\n"
+    elif isinstance(emotions, dict):
+        # 兼容老格式
+        for role, role_data in emotions.items():
+            if isinstance(role_data, dict) and "核心主线" in role_data:
+                public_context += f"- {name_map.get(role, role)} ({role}): {role_data['核心主线']}\n"
             
     # 4. 循环调用大模型，逐段生成小说
     print("\n--- Step 2: Writing scenes one by one ---")
     
     # 恢复已有段落
     generated_paragraphs = progress_data.get("generated_paragraphs", [])
-    
-    # 获取女主的情绪点字典，方便在场景中查找对应情绪
-    female_emotions = emotions.get("女主", {}).get("关键场景情绪", {})
     
     for i, (scene_name, scene_data) in enumerate(scenes_dict.items()):
         # 如果传入了 target_scene_index 且当前索引不匹配，则跳过生成
@@ -186,17 +219,36 @@ def write_story(json_path, target_scene_index=None, context_level=2, user_instru
             valid_paragraphs = [p for p in generated_paragraphs[start_idx:i] if p != "【待生成】"]
             context_paragraphs = "\n\n".join(valid_paragraphs)
         
-        # 查找该场景对应的情绪（尝试模糊匹配）
+        # 查找该场景对应的情绪
         scene_emotion = "（自由发挥符合剧情的细腻情绪）"
-        for k, v in female_emotions.items():
-            if scene_name in k or k in scene_name:
-                scene_emotion = v
-                break
+        
+        # 首先尝试从新版 JSON 的场景细纲字典中直接读取情绪点
+        if isinstance(scene_data, dict) and "情绪点" in scene_data and scene_data["情绪点"]:
+            scene_emotion = scene_data["情绪点"]
+        elif rewritten_emotions:
+            # 如果存在重构后的情绪点（全局列表），尝试模糊查找
+            for ep in rewritten_emotions:
+                if isinstance(ep, str) and (scene_name in ep or ep in scene_name):
+                    scene_emotion = ep
+                    break
+        elif isinstance(emotions, list):
+            # 兼容老格式：原始的全局列表情绪点
+            for ep in emotions:
+                if isinstance(ep, str) and (scene_name in ep or ep in scene_name):
+                    scene_emotion = ep
+                    break
+        elif isinstance(emotions, dict):
+            # 兼容老格式：从女主字典里找
+            female_emotions = emotions.get("女主", {}).get("关键场景情绪", {})
+            for k, v in female_emotions.items():
+                if scene_name in k or k in scene_name:
+                    scene_emotion = v
+                    break
         
         # 构建当前段落的写作 prompt
         intro_instruction = ""
         if i == 0:
-            intro_instruction = "这是小说的开篇，请开局直接用精炼的语言交代核心背景、人物身份和冲突，比如“我叫XXX，今天是我闪婚的第十天”，或者通过几句激烈的对话直接交代人物关系，绝不拖泥带水！"
+            intro_instruction = "这是小说的开篇，请开局直接用精炼的语言交代核心背景、人物身份和冲突，比如“我叫XXX，今天是我闪婚的第十天，是第一次见婆婆xxx”，或者通过几句激烈的对话直接交代人物关系，绝不拖泥带水！"
         else:
             intro_instruction = "请紧接前文剧情自然往下写，绝对不要再次重复自我介绍（如“我叫XXX”）或重新交代背景！"
             
@@ -293,7 +345,7 @@ if __name__ == "__main__":
     
     # 获取默认路径
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    default_json_path = os.path.join(current_dir, "大纲", "闪婚第十天，婆婆疑我是她失散多年的亲女儿.json")
+    default_json_path = os.path.join(current_dir, "大纲", "婆婆发帖寻亲，闪婚老公竟非亲弟.json")
     
     parser = argparse.ArgumentParser(description="Novel Writer")
     parser.add_argument("json_path", nargs="?", default=default_json_path, help="Path to the input JSON file")
