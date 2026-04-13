@@ -216,26 +216,61 @@
     const navItems = document.querySelectorAll('.nav-item');
     const panels = document.querySelectorAll('.panel');
 
-    navItems.forEach(item => {
-        item.addEventListener('click', () => {
-            // 移除所有 active 状态及相关样式
-            navItems.forEach(nav => {
-                nav.classList.remove('active', 'bg-blue-50', 'text-blue-700');
-                nav.classList.add('text-slate-600', 'hover:bg-slate-50', 'hover:text-slate-900');
-                nav.querySelector('svg').classList.remove('text-blue-600');
-                nav.querySelector('svg').classList.add('text-slate-400');
-            });
-            panels.forEach(panel => panel.classList.remove('active'));
-            
-            // 添加当前 active 状态
+    function switchTab(targetId) {
+        // 移除所有 active 状态及相关样式
+        navItems.forEach(nav => {
+            nav.classList.remove('active', 'bg-blue-50', 'text-blue-700');
+            nav.classList.add('text-slate-600', 'hover:bg-slate-50', 'hover:text-slate-900');
+            nav.querySelector('svg').classList.remove('text-blue-600');
+            nav.querySelector('svg').classList.add('text-slate-400');
+        });
+        panels.forEach(panel => panel.classList.remove('active'));
+        
+        // 找到目标导航项并添加 active 状态
+        const item = Array.from(navItems).find(nav => nav.getAttribute('data-target') === targetId);
+        if (item) {
             item.classList.add('active', 'bg-blue-50', 'text-blue-700');
             item.classList.remove('text-slate-600', 'hover:bg-slate-50', 'hover:text-slate-900');
             item.querySelector('svg').classList.add('text-blue-600');
             item.querySelector('svg').classList.remove('text-slate-400');
-            
+        }
+        
+        // 激活目标面板
+        const targetPanel = document.getElementById(targetId);
+        if (targetPanel) {
+            targetPanel.classList.add('active');
+        }
+    }
+
+    navItems.forEach(item => {
+        item.addEventListener('click', () => {
             const targetId = item.getAttribute('data-target');
-            document.getElementById(targetId).classList.add('active');
+            switchTab(targetId);
+            
+            // 更新 URL，支持刷新保持
+            const tabName = targetId.replace('-panel', '');
+            history.pushState(null, '', `/workspace/${tabName}`);
         });
+    });
+
+    // 监听浏览器前进后退按钮
+    window.addEventListener('popstate', () => {
+        const pathParts = window.location.pathname.split('/');
+        const tabName = pathParts[pathParts.length - 1];
+        if (['extract', 'write', 'config'].includes(tabName)) {
+            switchTab(`${tabName}-panel`);
+        }
+    });
+
+    // 页面加载时根据 URL 初始化标签页
+    window.addEventListener('DOMContentLoaded', () => {
+        const pathParts = window.location.pathname.split('/');
+        const tabName = pathParts[pathParts.length - 1];
+        if (['extract', 'write', 'config'].includes(tabName)) {
+            switchTab(`${tabName}-panel`);
+        } else {
+            switchTab('extract-panel'); // 默认
+        }
     });
 
     // 密码可见性切换

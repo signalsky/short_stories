@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify, render_template, redirect
 from flask_cors import CORS
 import json
 import os
@@ -28,8 +28,15 @@ active_generate_processes = {}
 
 @app.route('/')
 def index():
-    """提供前端静态页面"""
-    return render_template('index.html')
+    """提供前端静态页面，默认重定向到提取大纲"""
+    return redirect('/workspace/extract')
+
+@app.route('/workspace/<tab>')
+def workspace(tab):
+    """工作台路由，支持 restful 的标签页"""
+    if tab not in ['extract', 'write', 'config']:
+        tab = 'extract'
+    return render_template('index.html', active_tab=tab)
 
 @app.route('/extract')
 def extract_page():
