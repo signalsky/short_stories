@@ -8,6 +8,158 @@ import tempfile
 import re
 from utils import call_dashscope_api, clean_and_parse_json
 
+def process_large_scene(scene_name, scene_data, total_words_in_dict, current_word_count, story_content):
+    """独立的函数：处理超过 900 字的场景拆分"""
+    target_words = scene_data.get("目标字数", 0)
+    print(f"Scene '{scene_name}' has {target_words} words (>900). Splitting via LLM...")
+    
+    split_count = (target_words // 800) + 1
+    
+    extracted_original_text = scene_data.get("参考原文", "")
+    if extracted_original_text and len(extracted_original_text) > 50:
+        scene_original_text = extracted_original_text
+    else:
+        start_ratio = current_word_count / max(1, total_words_in_dict)
+        end_ratio = (current_word_count + target_words) / max(1, total_words_in_dict)
+        start_idx = max(0, int(len(story_content) * (start_ratio - 0.05)))
+        end_idx = min(len(story_content), int(len(story_content) * (end_ratio + 0.05)))
+        scene_original_text = story_content[start_idx:end_idx]
+        
+    split_sub_prompt = f'''你是一个专业的小说编辑。
+目前有一个场景（情绪点）的内容过于粗糙庞大，目标字数高达 {target_words} 字。
+请将这个大场景进一步细化，拆分为 {split_count} 个连续的子场景/子情绪点。
+
+【原场景信息】：
+- 场景名：{scene_name}
+- 情绪点：{scene_data.get("情绪点", "")}
+- 剧情细纲：{scene_data.get("剧情细纲", "")}
+
+【拆分要求】：
+1. 必须根据拆分后的剧情内容，**自主为每一个子场景起一个全新的、准确概括内容的“场景名”**，绝对不要使用“{scene_name}_1”这种生硬的后缀编号。
+2. 目标字数：该子场景分配到的【参考原文】的实际字数。你不需要自己编造，直接根据切分出的原文长度填写。
+3. 参考原文（完整的原文切分）：你必须将传入的【该场景对应的部分小说原文】**完整地、毫无遗漏地**切分到各个子场景的“参考原文”字段中。所有子场景的“参考原文”按顺序拼接起来，必须与传入的原文字段一字不差！绝对不允许只提取片段或概括！
+4. 必须且只能输出合法的 JSON 格式。
+5. 绝对不要出现真实姓名，全部统一使用角色代称。
+
+【JSON 格式要求示例】：
+{{
+  "拆分结果": [
+    {{
+      "场景名": "（你新起的场景名1，如：假装摔倒试探）",
+      "目标字数": 400,
+      "情绪点": "（细化后的前半部分情绪）",
+      "剧情细纲": "（细化后的前半部分动作和剧情）",
+      "参考原文": "（此处填入该子场景对应的完整原文切分，必须毫无遗漏）"
+    }},
+    {{
+      "场景名": "（你新起的场景名2，如：察觉真相绝望）",
+      "目标字数": 600,
+      "情绪点": "（细化后的后半部分情绪）",
+      "剧情细纲": "（细化后的后半部分动作和剧情）",
+      "参考原文": "（此处填入该子场景对应的完整原文切分，必须毫无遗漏）"
+    }}
+  ]
+}}
+
+【该场景对应的部分小说原文（请参考这段原文进行细腻拆分）】：
+{scene_original_text}
+'''
+    sub_split_content = call_dashscope_api(split_sub_prompt, system_prompt="你是一个专业的小说编辑，擅长将大段剧情拆分为更细致的情绪波折。")
+    result_scenes = []
+    
+    if sub_split_content:
+        sub_split_json = clean_and_parse_json(sub_split_content)
+        if sub_split_json and "拆分结果" in sub_split_json:
+            split_results = sub_split_json["拆分结果"]
+            
+            if isinstance(split_results, list):
+                sub_scenes_items = []
+                for item in split_results:
+                    if isinstance(item, dict) and "场景名" in item:
+                        sub_scenes_items.append((item.pop("场景名"), item))
+            elif isinstance(split_results, dict):
+                sub_scenes_items = list(split_results.items())
+            else:
+                sub_scenes_items = []
+            
+            for sub_name, sub_data in sub_scenes_items:
+                original_text = sub_data.get("参考原文", "")
+                if original_text:
+                    sub_target_words = len(original_text)
+                else:
+                    ratio = sub_data.get("字数占比", 0)
+                    if isinstance(ratio, (int, float)) and ratio > 0:
+                        sub_target_words = int(target_words * (ratio / 100.0))
+                    else:
+                        sub_target_words = sub_data.get("目标字数", target_words // max(1, len(sub_scenes_items)))
+                
+                sub_data["目标字数"] = sub_target_words
+                if "字数占比" in sub_data:
+                    del sub_data["字数占比"]
+                
+                result_scenes.append((sub_name, sub_data))
+            print(f"Successfully split '{scene_name}' into {len(sub_scenes_items)} sub-scenes.")
+            return result_scenes
+        else:
+            print(f"Failed to parse split result for '{scene_name}', keeping original.")
+    else:
+        print(f"LLM failed to split '{scene_name}', keeping original.")
+        
+    return [(scene_name, scene_data)]
+
+def extract_scene_elements(scene_name, original_text, global_storyline_str, index, total):
+    """独立的函数：处理场景四要素（爽点、钩子、泪点、迷之操作）的并发提取"""
+    print(f"  [{index}/{total}] Extracting elements for scene: {scene_name} ...")
+    
+    element_prompt = f'''你是一个专业的小说分析师。请结合下面提供的【全局故事线上下文】，仔细阅读该小说某个具体场景的【完整的参考原文切分】。
+你的任务是：从这段【完整的参考原文切分】中提取以下四个关键信息要素：【爽点】、【钩子】、【泪点】、【迷之操作】。
+
+【提取要求】：
+1. 绝对不要出现主角或配角的真实姓名，全部统一使用角色代称（如：女主、女配、男主等）。
+2. 每种要素可能存在 **0个、1个或多个**。如果该段落中完全没有某个要素，请返回一个空数组 `[]`。如果有多个，请拆分为数组的多个元素。
+3. 提取的内容必须具体、有画面感，说明具体发生了什么事，而不是含糊的概括。
+4. 必须输出为合法的 JSON 格式，不要包含 Markdown 标记。
+
+【要素定义及示例】：
+- 钩子：给人期待感，有反转，有悬念，能吸引读者迫不及待继续往下看的情节。例如：“男主哭了，对我疯狂表白，拒绝跟我离婚。女配这时走了出来。” 或者 “但是她却不知道，我家手艺一脉传两支，我姐姐化的是活人阳妆，我化的是死人阴妆。”
+- 爽点：打脸反派、反转后主角扬眉吐气、反派吃瘪、获得极大优势的瞬间。
+- 泪点：极度委屈、绝望、令人心疼的情感爆发点。
+- 迷之操作：角色做出的让人极其不解、降智或出人意料的行为。
+
+【JSON 格式要求】：
+{{
+  "爽点": ["..."],
+  "钩子": ["..."],
+  "泪点": [],
+  "迷之操作": ["...", "..."]
+}}
+
+【全局故事线上下文（仅供你了解背景，不要从这里提取要素）】：
+{global_storyline_str}
+
+【你需要分析提取的完整的参考原文切分】：
+{original_text}
+'''
+    element_content = call_dashscope_api(element_prompt, system_prompt="你是一个专业的小说分析师，擅长精准提炼剧情的爽点和钩子。")
+    extracted_data = {}
+    
+    if element_content:
+        element_json = clean_and_parse_json(element_content)
+        if element_json:
+            for key in ["爽点", "钩子", "泪点", "迷之操作"]:
+                val = element_json.get(key)
+                if isinstance(val, list) and len(val) > 0 and val[0] and val[0] != "无":
+                    extracted_data[key] = val
+                elif isinstance(val, str) and val and val != "无" and val != "[]":
+                    extracted_data[key] = [val]
+            print(f"    -> Successfully extracted elements for {scene_name}")
+        else:
+            print(f"    -> Failed to parse elements JSON for {scene_name}")
+    else:
+        print(f"    -> LLM failed to return elements for {scene_name}")
+        
+    return scene_name, extracted_data
+
 def extract_storyline(story_path):
     print("Start execution")
     
@@ -142,8 +294,8 @@ def extract_storyline(story_path):
 1. 绝对不要出现主角或配角的真实姓名，全部统一使用角色代称（如：女主、男主、反派女、男主母亲等），禁止使用任何具体人名。
 2. 情绪点必须是以“人物 + 发生了什么事 + 内心感受”为结构的详细描述，需极致细致！
 3. 剧情细纲：请在撰写每个场景的“剧情细纲”时，必须严格参考并吸纳你在【任务一】中给出的网文主编结构优化建议！如果建议在某处增加波折、拉扯或反差（如期待落空、突发意外），你必须在对应场景的细纲中直接加上具体的波折事件或反转动作！不要照搬原文平淡的叙述，把反差感做足。
-4. 字数调整：根据每个场景的原文真实字数，如果你认为该段落节奏正好请给原字数；如果情绪铺垫不够请适当增加字数；如果过于啰嗦请适当删减字数。
-5. 参考原文：请从传入的【小说原文】中，将支撑这个场景/情绪点的**对应的原始段落文本**完整提取出来，放入“参考原文”字段中，以便后续二次拆分或写作时精准参考。
+4. 目标字数：直接统计该场景切分到的【参考原文】的实际字数。原文这段是多少字，目标字数就是多少。
+5. 参考原文（完整的原文切分）：你必须将【小说原文】**完整地、毫无遗漏地**切分到各个场景的“参考原文”字段中。所有场景的“参考原文”按时间顺序拼接起来，必须与传入的【小说原文】一字不差！绝对不允许只提取片段、概括或省略任何一句话！
 6. **严格遵循原文时间线**：你必须从小说原文的**第一段开始，从头到尾、按时间先后顺序**依次提取每一个场景！绝对不允许跳跃、倒叙或打乱事件发生的先后顺序！
 
 【JSON 格式要求】：
@@ -158,14 +310,14 @@ def extract_storyline(story_path):
       "目标字数": 190,
       "情绪点": "女主第一次见婆婆，发现婆婆看她的眼神异常古怪，内心充满疑惑、猜测，还有隐隐的不安。",
       "剧情细纲": "女主刚进门，男主母亲用审视的目光打量她，女主内心感到局促不安。",
-      "参考原文": "（此处填入该场景对应的具体原文片段，保持原汁原味）"
+      "参考原文": "（此处填入该场景对应的完整原文切分，毫无遗漏）"
     }},
     {{
       "场景名": "浏览热帖恐慌",
       "目标字数": 450,
       "情绪点": "女主偶然看到婆婆发的寻亲贴，感到震惊、荒谬，以及对自己身世的恐惧。",
       "剧情细纲": "女主翻看手机时，突然看到了男主母亲发的寻亲热帖，震惊之余不小心打翻了水杯。",
-      "参考原文": "（此处填入该场景对应的具体原文片段，保持原汁原味）"
+      "参考原文": "（此处填入该场景对应的完整原文切分，毫无遗漏）"
     }}
   ]
 }}
@@ -209,20 +361,21 @@ def extract_storyline(story_path):
                 for item in split_data:
                     if isinstance(item, dict):
                         scene_name = item.get("场景名", "")
-                        target_words = item.get("目标字数", 0)
+                        original_text = item.get("参考原文", "")
+                        # 目标字数直接由参考原文统计得出
+                        target_words = len(original_text) if original_text else item.get("目标字数", 0)
                         outline = item.get("剧情细纲", "")
                         emotion_point = item.get("情绪点", "")
-                        original_text = item.get("参考原文", "")
                         if scene_name:
                             new_split_dict[scene_name] = {"目标字数": target_words, "情绪点": emotion_point, "剧情细纲": outline, "参考原文": original_text}
             # 如果大模型返回的是字典，提取目标字数和细纲
             elif isinstance(split_data, dict):
                 for k, v in split_data.items():
                     if isinstance(v, dict):
-                        tw = v.get("目标字数", 0)
+                        original_text = v.get("参考原文", "")
+                        tw = len(original_text) if original_text else v.get("目标字数", 0)
                         outline = v.get("剧情细纲", "")
                         emotion_point = v.get("情绪点", "")
-                        original_text = v.get("参考原文", "")
                         new_split_dict[k] = {"目标字数": tw, "情绪点": emotion_point, "剧情细纲": outline, "参考原文": original_text}
                     elif isinstance(v, (int, str)):
                         try:
@@ -233,35 +386,11 @@ def extract_storyline(story_path):
             # 替换为纯净的字典
             if new_split_dict:
                 final_result["场景切分与建议"] = new_split_dict
-            
-            # 增加基于原文长度按比例重新分配字数的逻辑，防止大模型计算出来的总和太少
-            if isinstance(final_result.get("场景切分与建议"), dict):
-                valid_dict = final_result["场景切分与建议"]
-                total_calculated = sum([v.get("目标字数", 0) for v in valid_dict.values() if isinstance(v, dict)])
-                actual_total = len(story_content)
-                
-                # 无论大模型计算的总和是多少，只要它偏离实际字数超过 10%，我们就按比例强制缩放
-                if total_calculated > 0 and (total_calculated < actual_total * 0.9 or total_calculated > actual_total * 1.1):
-                    ratio = actual_total / total_calculated
-                    print(f"LLM calculated total ({total_calculated}) is deviated from actual total ({actual_total}). Scaling by {ratio:.2f}...")
-                    adjusted_dict = {}
-                    for k, v in valid_dict.items():
-                        if isinstance(v, dict):
-                            calculated_words = int(v.get("目标字数", 0) * ratio)
-                            adjusted_dict[k] = {
-                                "目标字数": calculated_words,
-                                "情绪点": v.get("情绪点", ""),
-                                "剧情细纲": v.get("剧情细纲", ""),
-                                "参考原文": v.get("参考原文", "")
-                            }
-                        else:
-                            adjusted_dict[k] = v
-                    final_result["场景切分与建议"] = adjusted_dict
 
         # 在保存前，递归清理所有值为“无”或“无。”的空场景/情绪
         final_result = remove_empty_values(final_result)
         
-        # --- 新增逻辑：对超过 900 字的场景进行二次 LLM 拆分 ---
+        # --- 新增逻辑：对超过 900 字的场景进行二次 LLM 拆分（多线程处理） ---
         if "场景切分与建议" in final_result and isinstance(final_result["场景切分与建议"], dict):
             scenes = final_result["场景切分与建议"]
             new_scenes = {}
@@ -271,122 +400,96 @@ def extract_storyline(story_path):
             total_words_in_dict = sum([v.get("目标字数", 0) for v in scenes.values() if isinstance(v, dict)])
             current_word_count = 0
             
-            for scene_name, scene_data in scenes.items():
-                if not isinstance(scene_data, dict):
-                    new_scenes[scene_name] = scene_data
-                    continue
+            import concurrent.futures
+            
+            # 收集需要拆分的任务和不需要拆分的任务，以保证最终顺序
+            # 列表元素格式: {"type": "normal", "name": name, "data": data} 或 {"type": "large", "name": name, "data": data, "future": future}
+            processing_tasks = []
+            
+            # 创建线程池
+            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+                for scene_name, scene_data in scenes.items():
+                    if not isinstance(scene_data, dict):
+                        processing_tasks.append({"type": "normal", "name": scene_name, "data": scene_data})
+                        continue
+                        
+                    target_words = scene_data.get("目标字数", 0)
                     
-                target_words = scene_data.get("目标字数", 0)
-                
-                if target_words > 900:
-                    needs_update = True
-                    print(f"Scene '{scene_name}' has {target_words} words (>900). Splitting via LLM...")
-                    
-                    # 计算需要拆分成几个子场景
-                    split_count = (target_words // 800) + 1
-                    
-                    # 优先使用大模型提取的参考原文，如果为空则降级使用比例截取
-                    extracted_original_text = scene_data.get("参考原文", "")
-                    if extracted_original_text and len(extracted_original_text) > 50:
-                        scene_original_text = extracted_original_text
+                    if target_words > 900:
+                        needs_update = True
+                        # 提交到线程池
+                        future = executor.submit(
+                            process_large_scene, 
+                            scene_name, 
+                            scene_data, 
+                            total_words_in_dict, 
+                            current_word_count, 
+                            story_content
+                        )
+                        processing_tasks.append({"type": "large", "name": scene_name, "future": future})
                     else:
-                        # 估算当前场景在原文中的起始和结束比例
-                        start_ratio = current_word_count / max(1, total_words_in_dict)
-                        end_ratio = (current_word_count + target_words) / max(1, total_words_in_dict)
-                        # 根据比例截取对应的原文片段，前后多扩展 5% 的缓冲内容，以防截断
-                        start_idx = max(0, int(len(story_content) * (start_ratio - 0.05)))
-                        end_idx = min(len(story_content), int(len(story_content) * (end_ratio + 0.05)))
-                        scene_original_text = story_content[start_idx:end_idx]
+                        processing_tasks.append({"type": "normal", "name": scene_name, "data": scene_data})
                         
                     current_word_count += target_words
-                    
-                    split_sub_prompt = f'''你是一个专业的小说编辑。
-目前有一个场景（情绪点）的内容过于粗糙庞大，目标字数高达 {target_words} 字。
-请将这个大场景进一步细化，拆分为 {split_count} 个连续的子场景/子情绪点。
-
-【原场景信息】：
-- 场景名：{scene_name}
-- 情绪点：{scene_data.get("情绪点", "")}
-- 剧情细纲：{scene_data.get("剧情细纲", "")}
-
-【拆分要求】：
-1. 必须根据拆分后的剧情内容，**自主为每一个子场景起一个全新的、准确概括内容的“场景名”**，绝对不要使用“{scene_name}_1”这种生硬的后缀编号。
-2. **字数分配比例**：你必须评估每个子场景在原文中所占的篇幅比例，并输出一个 1-100 之间的整数作为【字数占比】。所有子场景的“字数占比”相加必须等于 100。
-3. 从传入的【该场景对应的部分小说原文】中，将支撑这个子场景/子情绪点的**对应的原始段落文本**完整提取出来，放入“参考原文”字段中。
-4. 必须且只能输出合法的 JSON 格式。
-5. 绝对不要出现真实姓名，全部统一使用角色代称。
-
-【JSON 格式要求示例】：
-{{
-  "拆分结果": [
-    {{
-      "场景名": "（你新起的场景名1，如：假装摔倒试探）",
-      "字数占比": 40,
-      "情绪点": "（细化后的前半部分情绪）",
-      "剧情细纲": "（细化后的前半部分动作和剧情）",
-      "参考原文": "（此处填入该子场景对应的具体原文片段，保持原汁原味）"
-    }},
-    {{
-      "场景名": "（你新起的场景名2，如：察觉真相绝望）",
-      "字数占比": 60,
-      "情绪点": "（细化后的后半部分情绪）",
-      "剧情细纲": "（细化后的后半部分动作和剧情）",
-      "参考原文": "（此处填入该子场景对应的具体原文片段，保持原汁原味）"
-    }}
-  ]
-}}
-
-【该场景对应的部分小说原文（请参考这段原文进行细腻拆分）】：
-{scene_original_text}
-'''
-                    sub_split_content = call_dashscope_api(split_sub_prompt, system_prompt="你是一个专业的小说编辑，擅长将大段剧情拆分为更细致的情绪波折。")
-                    if sub_split_content:
-                        sub_split_json = clean_and_parse_json(sub_split_content)
-                        if sub_split_json and "拆分结果" in sub_split_json:
-                            # 兼容大模型返回列表或字典的情况
-                            split_results = sub_split_json["拆分结果"]
-                            
-                            # 如果返回的是列表，将每个对象转换为键值对形式
-                            if isinstance(split_results, list):
-                                sub_scenes_items = []
-                                for item in split_results:
-                                    if isinstance(item, dict) and "场景名" in item:
-                                        sub_scenes_items.append((item.pop("场景名"), item))
-                            elif isinstance(split_results, dict):
-                                sub_scenes_items = list(split_results.items())
-                            else:
-                                sub_scenes_items = []
-                            
-                            # 将拆分出来的多个子场景插入到新的字典中，保持顺序
-                            for sub_name, sub_data in sub_scenes_items:
-                                # 实际程序统计：根据大模型给的占比，结合父场景的字数，计算子场景的“目标字数”
-                                ratio = sub_data.get("字数占比", 0)
-                                if isinstance(ratio, (int, float)) and ratio > 0:
-                                    sub_target_words = int(target_words * (ratio / 100.0))
-                                else:
-                                    # Fallback to evenly distributing if ratio is missing or invalid
-                                    sub_target_words = target_words // max(1, len(sub_scenes_items))
+                
+                # 收集并按原顺序合并结果
+                if needs_update:
+                    for task in processing_tasks:
+                        if task["type"] == "normal":
+                            new_scenes[task["name"]] = task["data"]
+                        elif task["type"] == "large":
+                            # 等待线程执行完毕并获取结果
+                            try:
+                                sub_scenes_list = task["future"].result()
+                                for sub_name, sub_data in sub_scenes_list:
+                                    new_scenes[sub_name] = sub_data
+                            except Exception as e:
+                                print(f"Error processing large scene '{task['name']}': {e}")
+                                # 如果报错，降级保留原场景
+                                new_scenes[task["name"]] = scenes.get(task["name"], {})
                                 
-                                sub_data["目标字数"] = sub_target_words
-                                # Remove the ratio field as it's no longer needed in the final JSON
-                                if "字数占比" in sub_data:
-                                    del sub_data["字数占比"]
-                                
-                                new_scenes[sub_name] = sub_data
-                            print(f"Successfully split '{scene_name}' into {len(sub_scenes_items)} sub-scenes.")
-                        else:
-                            print(f"Failed to parse split result for '{scene_name}', keeping original.")
-                            new_scenes[scene_name] = scene_data
-                    else:
-                        print(f"LLM failed to split '{scene_name}', keeping original.")
-                        new_scenes[scene_name] = scene_data
-                else:
-                    # 不超过 900 字的正常场景，直接保留
-                    new_scenes[scene_name] = scene_data
-            
-            if needs_update:
-                final_result["场景切分与建议"] = new_scenes
+                    final_result["场景切分与建议"] = new_scenes
         # --- 二次拆分逻辑结束 ---
+
+        # --- 新增逻辑：遍历所有场景，针对参考原文逐个调用大模型提取【爽点、钩子、泪点、迷之操作】 ---
+        if "场景切分与建议" in final_result and isinstance(final_result["场景切分与建议"], dict):
+            scenes = final_result["场景切分与建议"]
+            print(f"\nStart extracting elements (爽点/钩子/泪点/迷之操作) for {len(scenes)} scenes...")
+            
+            # 将全局故事线转为字符串，作为上下文提供给大模型
+            global_storyline_str = json.dumps(final_result.get("故事线提取", {}), ensure_ascii=False)
+            
+            # 使用多线程并发提取四大要素
+            element_tasks = []
+            with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+                for i, (scene_name, scene_data) in enumerate(scenes.items()):
+                    if not isinstance(scene_data, dict):
+                        continue
+                    
+                    original_text = scene_data.get("参考原文", "")
+                    if not original_text or len(original_text) < 20:
+                        continue
+                        
+                    future = executor.submit(
+                        extract_scene_elements,
+                        scene_name,
+                        original_text,
+                        global_storyline_str,
+                        i + 1,
+                        len(scenes)
+                    )
+                    element_tasks.append((scene_name, future))
+                
+                # 收集提取结果并合并到 scene_data 中
+                for scene_name, future in element_tasks:
+                    try:
+                        _, extracted_data = future.result()
+                        if extracted_data:
+                            scenes[scene_name].update(extracted_data)
+                    except Exception as e:
+                        print(f"Error extracting elements for '{scene_name}': {e}")
+                        
+        # --- 元素提取结束 ---
 
         # 移除不需要的多余字段
         if "字数统计总结" in final_result:

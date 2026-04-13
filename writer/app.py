@@ -23,6 +23,9 @@ REWRITE_DIR = os.path.join(WRITER_DIR, '重写')
 os.makedirs(OUTLINE_DIR, exist_ok=True)
 os.makedirs(REWRITE_DIR, exist_ok=True)
 
+# 记录正在运行的生成任务进程 { outline_filename: subprocess.Popen }
+active_generate_processes = {}
+
 @app.route('/')
 def index():
     """提供前端静态页面"""
@@ -105,6 +108,19 @@ def save_outline(filename):
         with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         return jsonify({"message": "Success"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/outlines/<filename>', methods=['DELETE'])
+def delete_outline(filename):
+    """删除指定大纲文件"""
+    try:
+        filepath = os.path.join(OUTLINE_DIR, filename)
+        if os.path.exists(filepath):
+            os.remove(filepath)
+            return jsonify({"message": "File deleted successfully"})
+        else:
+            return jsonify({"error": "File not found"}), 404
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -198,6 +214,26 @@ def save_rewrite(filename):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/rewrites/<filename>', methods=['DELETE'])
+def delete_rewrite(filename):
+    """删除指定重写文件及对应的 txt 文件"""
+    try:
+        filepath = os.path.join(REWRITE_DIR, filename)
+        if os.path.exists(filepath):
+            os.remove(filepath)
+            
+            # 尝试删除对应的 txt 文件
+            txt_filename = filename.replace('_进度.json', '.txt')
+            txt_filepath = os.path.join(REWRITE_DIR, txt_filename)
+            if os.path.exists(txt_filepath):
+                os.remove(txt_filepath)
+                
+            return jsonify({"message": "File deleted successfully"})
+        else:
+            return jsonify({"error": "File not found"}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/generate', methods=['POST'])
 def start_generation():
     """选择大纲并启动生成脚本"""
@@ -208,6 +244,10 @@ def start_generation():
         if not outline_filename:
             return jsonify({"error": "No outline selected"}), 400
             
+        # 如果当前大纲正在生成中，直接返回
+        if outline_filename in active_generate_processes:
+            return jsonify({"error": "该小说正在生成中，请先停止或等待完成"}), 400
+            
         outline_path = os.path.join(OUTLINE_DIR, outline_filename)
         if not os.path.exists(outline_path):
             return jsonify({"error": "Selected outline file not found"}), 404
@@ -215,17 +255,41 @@ def start_generation():
         # 调用 story_writer.py
         writer_script = os.path.join(WRITER_DIR, 'story_writer.py')
         
-        # 使用 subprocess 运行脚本，并捕获输出
-        # 注意：实际生产中这应该是异步任务，这里为了简化先做同步阻塞调用
-        result = subprocess.run(
+        # 为了解决 Windows 下可能出现的终端编码问题，这里强制使用 utf-8 运行 python 并捕获输出
+        env = os.environ.copy()
+        env['PYTHONIOENCODING'] = 'utf-8'
+        
+        # 使用 subprocess.Popen 启动进程，以便支持打断
+        process = subprocess.Popen(
             ['python', writer_script, outline_path],
-            capture_output=True,
-            text=True,
-            encoding='utf-8'
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env
         )
+        
+        # 记录进程
+        active_generate_processes[outline_filename] = process
+        
+        # 阻塞等待进程完成
+        stdout_bytes, stderr_bytes = process.communicate()
+        
+        # 手动解码，忽略错误
+        stdout = stdout_bytes.decode('utf-8', errors='replace')
+        stderr = stderr_bytes.decode('utf-8', errors='replace')
+        
+        returncode = process.returncode
+        
+        # 进程结束后移除记录
+        if outline_filename in active_generate_processes:
+            del active_generate_processes[outline_filename]
             
-        if result.returncode != 0:
-            return jsonify({"error": f"Generation failed", "logs": result.stderr}), 500
+        # 判断是被手动打断还是发生了错误
+        if returncode != 0:
+            # 可能是手动 terminate (负数)，或者是 python 脚本内部 exit(1)
+            if returncode < 0 or "Generation aborted due to repeated failures" in stdout or "Generation aborted due to repeated failures" in stderr:
+                return jsonify({"error": "生成已中断或失败", "logs": stdout + "\n" + stderr}), 500
+            else:
+                return jsonify({"error": f"Generation failed with code {returncode}", "logs": stderr}), 500
             
         # 尝试推断生成的进度文件名返回给前端
         safe_title = outline_filename.replace('.json', '')
@@ -235,10 +299,35 @@ def start_generation():
             
         return jsonify({
             "message": "Generation completed successfully", 
-            "logs": result.stdout,
+            "logs": stdout,
             "progress_file": expected_progress_file
         })
         
+    except Exception as e:
+        # 清理可能残留的记录
+        if 'outline_filename' in locals() and outline_filename in active_generate_processes:
+            del active_generate_processes[outline_filename]
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/cancel_generate', methods=['POST'])
+def cancel_generation():
+    """中断生成过程"""
+    try:
+        data = request.json
+        outline_filename = data.get('outline_filename')
+        
+        if not outline_filename:
+            return jsonify({"error": "No outline specified"}), 400
+            
+        if outline_filename in active_generate_processes:
+            process = active_generate_processes[outline_filename]
+            # 终止进程
+            process.terminate()
+            del active_generate_processes[outline_filename]
+            return jsonify({"message": "已成功中断生成过程"})
+        else:
+            return jsonify({"message": "未找到正在运行的生成任务"})
+            
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -275,17 +364,24 @@ def rewrite_single_scene():
         if instruction:
             cmd.extend(['--instruction', instruction])
             
-        result = subprocess.run(
+        env = os.environ.copy()
+        env['PYTHONIOENCODING'] = 'utf-8'
+        
+        process = subprocess.Popen(
             cmd,
-            capture_output=True,
-            text=True,
-            encoding='utf-8'
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env
         )
+        
+        stdout_bytes, stderr_bytes = process.communicate()
+        stdout = stdout_bytes.decode('utf-8', errors='replace')
+        stderr = stderr_bytes.decode('utf-8', errors='replace')
             
-        if result.returncode != 0:
-            return jsonify({"error": "Scene rewrite failed", "logs": result.stderr}), 500
+        if process.returncode != 0:
+            return jsonify({"error": "Scene rewrite failed", "logs": stderr}), 500
             
-        return jsonify({"message": "Scene rewritten successfully"})
+        return jsonify({"message": "Scene rewritten successfully", "logs": stdout})
         
     except Exception as e:
         return jsonify({"error": str(e)}), 500

@@ -256,14 +256,29 @@
 
                 files.forEach(file => {
                     const nameWithoutExt = file.replace('.json', '');
+                    
+                    const itemDiv = document.createElement('div');
+                    itemDiv.className = 'group relative flex items-center mb-1';
+                    
                     const btn = document.createElement('button');
-                    btn.className = `w-full text-left px-3 py-2.5 rounded-lg text-sm font-medium border-l-2 border-transparent text-slate-600 hover:bg-slate-50 transition-all truncate`;
+                    btn.className = `w-full text-left px-3 py-2.5 pr-8 rounded-lg text-sm font-medium border-l-2 border-transparent text-slate-600 hover:bg-slate-50 transition-all truncate`;
                     btn.textContent = nameWithoutExt;
                     btn.dataset.filename = file;
                     btn.title = nameWithoutExt;
-                    
                     btn.onclick = () => loadOutline(file, btn);
-                    outlineList.appendChild(btn);
+                    
+                    const delBtn = document.createElement('button');
+                    delBtn.className = 'absolute right-2 p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded opacity-0 group-hover:opacity-100 transition-all';
+                    delBtn.title = '删除文件';
+                    delBtn.innerHTML = '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>';
+                    delBtn.onclick = (e) => {
+                        e.stopPropagation();
+                        deleteOutline(file);
+                    };
+                    
+                    itemDiv.appendChild(btn);
+                    itemDiv.appendChild(delBtn);
+                    outlineList.appendChild(itemDiv);
                 });
                 
                 // 如果当前有选中的文件，重新加上高亮
@@ -275,6 +290,30 @@
             } catch (err) {
                 console.error("Failed to fetch outlines:", err);
                 outlineList.innerHTML = '<div class="text-center py-4 text-red-400 text-sm">加载失败</div>';
+            }
+        }
+
+        async function deleteOutline(filename) {
+            if (!confirm(`确定要删除大纲文件 "${filename}" 吗？此操作不可恢复。`)) return;
+            
+            try {
+                const res = await fetch(`/api/outlines/${filename}`, {
+                    method: 'DELETE'
+                });
+                
+                if (!res.ok) throw new Error("删除失败");
+                
+                showToast("删除成功", "大纲文件已删除");
+                
+                if (currentFilename === filename) {
+                    currentFilename = null;
+                    currentJsonData = null;
+                    switchView('empty');
+                }
+                
+                fetchOutlines();
+            } catch (err) {
+                showToast("删除失败", err.message, true);
             }
         }
 
@@ -347,6 +386,15 @@
                 const structCard = createCard('结构优化与反差建议');
                 structCard.appendChild(createField('', data['结构优化建议'], `结构优化建议`, false, true));
                 editorContainer.appendChild(structCard);
+            }
+            
+            // 3.6 渲染引子/楔子
+            if (data['引子/楔子']) {
+                const prologueCard = createCard('引子/楔子');
+                const prologueField = createField('', data['引子/楔子'], `引子/楔子`, false, true);
+                prologueField.querySelector('.json-field').classList.add('bg-amber-50', 'border-amber-200');
+                prologueCard.appendChild(prologueField);
+                editorContainer.appendChild(prologueCard);
             }
             
             // 4. 渲染情绪点提取 (适配旧的全局列表格式或角色字典格式，如果是新版包含在场景里则不再单独显示全局列表)
@@ -450,6 +498,58 @@
                         outlineTitle.textContent = '剧情细纲';
                         sceneBlock.appendChild(outlineTitle);
                         sceneBlock.appendChild(createField('', sceneData['剧情细纲'], `场景切分与建议.${sceneName}.剧情细纲`, true, true));
+                    }
+                    
+                    // 新增：渲染爽点、钩子、泪点、迷之操作
+                    const elements = ['爽点', '钩子', '泪点', '迷之操作'];
+                    const elementColors = {
+                        '爽点': 'text-red-500 bg-red-50 border-red-200',
+                        '钩子': 'text-purple-600 bg-purple-50 border-purple-200',
+                        '泪点': 'text-blue-500 bg-blue-50 border-blue-200',
+                        '迷之操作': 'text-orange-500 bg-orange-50 border-orange-200'
+                    };
+                    
+                    const hasElements = elements.some(el => {
+                        const val = sceneData[el];
+                        if (!val || val === '无' || val === '[]') return false;
+                        if (Array.isArray(val) && (val.length === 0 || val[0] === '无')) return false;
+                        return true;
+                    });
+                    
+                    if (hasElements) {
+                        const elementsDiv = document.createElement('div');
+                        elementsDiv.className = 'mt-3 pt-3 border-t border-slate-100 border-dashed grid grid-cols-1 gap-2';
+                        
+                        elements.forEach(el => {
+                            const val = sceneData[el];
+                            let isValid = false;
+                            let displayStr = '';
+                            
+                            if (Array.isArray(val) && val.length > 0 && val[0] !== '无') {
+                                isValid = true;
+                                displayStr = val.join('； ');
+                            } else if (typeof val === 'string' && val !== '无' && val !== '[]') {
+                                isValid = true;
+                                displayStr = val;
+                            }
+                            
+                            if (isValid) {
+                                const elWrapper = document.createElement('div');
+                                elWrapper.className = `p-2 rounded border text-xs ${elementColors[el]}`;
+                                
+                                const elLabel = document.createElement('span');
+                                elLabel.className = 'font-bold mr-1';
+                                elLabel.textContent = `【${el}】:`;
+                                
+                                const elContent = document.createElement('span');
+                                elContent.textContent = displayStr;
+                                
+                                elWrapper.appendChild(elLabel);
+                                elWrapper.appendChild(elContent);
+                                elementsDiv.appendChild(elWrapper);
+                            }
+                        });
+                        sceneBlock.appendChild(elementsDiv);
                     }
                     
                     if (sceneData['参考原文']) {

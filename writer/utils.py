@@ -33,6 +33,15 @@ def call_dashscope_api(prompt, system_prompt="你是一个专业的小说分析A
         ]
     }
     
+    import urllib.request
+    import urllib.error
+    
+    url = f"{base_url}/chat/completions"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}"
+    }
+    
     # 使用随机的 payload 文件名防止并发冲突
     import tempfile
     import uuid

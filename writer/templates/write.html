@@ -122,6 +122,10 @@
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
                                 开始生成
                             </button>
+                            <button type="button" id="btnCancelGenerate" class="hidden bg-red-500 hover:bg-red-600 text-white px-6 py-2.5 rounded-xl font-medium text-sm shadow-sm transition-all flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                                生成中... (点击中断)
+                            </button>
                         </div>
                     </form>
 
@@ -220,13 +224,14 @@
         const outlineSelect = document.getElementById('outlineSelect');
         const generateForm = document.getElementById('generateForm');
         const btnSubmitGenerate = document.getElementById('btnSubmitGenerate');
+        const btnCancelGenerate = document.getElementById('btnCancelGenerate');
         const generatingStatus = document.getElementById('generatingStatus');
         
         const btnEdit = document.getElementById('btnEdit');
         const btnSave = document.getElementById('btnSave');
         const editorContainer = document.getElementById('editorContainer');
         
-        // 弹窗 DOM
+        // 单段重写弹窗
         const rewriteModal = document.getElementById('rewriteModal');
         const rewriteModalContent = document.getElementById('rewriteModalContent');
         const btnCloseModal = document.getElementById('btnCloseModal');
@@ -305,14 +310,29 @@
 
                 files.forEach(file => {
                     const nameWithoutExt = file.replace('_进度.json', '');
+                    
+                    const itemDiv = document.createElement('div');
+                    itemDiv.className = 'group relative flex items-center mb-1';
+                    
                     const btn = document.createElement('button');
-                    btn.className = `w-full text-left px-3 py-2.5 rounded-lg text-sm font-medium border-l-2 border-transparent text-slate-600 hover:bg-slate-50 transition-all truncate`;
+                    btn.className = `w-full text-left px-3 py-2.5 pr-8 rounded-lg text-sm font-medium border-l-2 border-transparent text-slate-600 hover:bg-slate-50 transition-all truncate`;
                     btn.textContent = nameWithoutExt;
                     btn.dataset.filename = file;
                     btn.title = nameWithoutExt;
-                    
                     btn.onclick = () => loadRewrite(file, btn);
-                    rewriteList.appendChild(btn);
+                    
+                    const delBtn = document.createElement('button');
+                    delBtn.className = 'absolute right-2 p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded opacity-0 group-hover:opacity-100 transition-all';
+                    delBtn.title = '删除文件';
+                    delBtn.innerHTML = '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>';
+                    delBtn.onclick = (e) => {
+                        e.stopPropagation();
+                        deleteRewrite(file);
+                    };
+                    
+                    itemDiv.appendChild(btn);
+                    itemDiv.appendChild(delBtn);
+                    rewriteList.appendChild(itemDiv);
                 });
                 
                 if (currentFilename) {
@@ -323,6 +343,30 @@
             } catch (err) {
                 console.error("Failed to fetch rewrites:", err);
                 rewriteList.innerHTML = '<div class="text-center py-4 text-red-400 text-sm">加载失败</div>';
+            }
+        }
+
+        async function deleteRewrite(filename) {
+            if (!confirm(`确定要删除生成文件 "${filename}" 及其对应的 txt 文件吗？此操作不可恢复。`)) return;
+            
+            try {
+                const res = await fetch(`/api/rewrites/${filename}`, {
+                    method: 'DELETE'
+                });
+                
+                if (!res.ok) throw new Error("删除失败");
+                
+                showToast("删除成功", "生成文件已删除");
+                
+                if (currentFilename === filename) {
+                    currentFilename = null;
+                    currentJsonData = null;
+                    switchView('empty');
+                }
+                
+                fetchRewrites();
+            } catch (err) {
+                showToast("删除失败", err.message, true);
             }
         }
 
@@ -572,8 +616,9 @@
             const outlineFile = outlineSelect.value;
             if (!outlineFile) return;
 
-            btnSubmitGenerate.disabled = true;
-            btnSubmitGenerate.innerHTML = `生成中...`;
+            btnSubmitGenerate.classList.add('hidden');
+            btnCancelGenerate.classList.remove('hidden');
+            outlineSelect.disabled = true;
             generatingStatus.classList.remove('hidden');
 
             try {
@@ -596,12 +641,45 @@
                 }
 
             } catch (err) {
-                showToast("生成失败", err.message, true);
+                showToast(err.message.includes("中断") ? "已中断" : "生成失败", err.message, true);
                 console.error(err);
             } finally {
-                btnSubmitGenerate.disabled = false;
-                btnSubmitGenerate.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg> 开始生成`;
+                btnCancelGenerate.classList.add('hidden');
+                btnSubmitGenerate.classList.remove('hidden');
+                outlineSelect.disabled = false;
                 generatingStatus.classList.add('hidden');
+            }
+        });
+
+        // 打断生成过程
+        btnCancelGenerate.addEventListener('click', async () => {
+            if (!confirm("确定要打断当前的生成任务吗？已成功生成并保存的部分将会保留。")) return;
+            
+            const outlineFile = outlineSelect.value;
+            if (!outlineFile) return;
+            
+            btnCancelGenerate.disabled = true;
+            btnCancelGenerate.innerHTML = `<svg class="animate-spin w-4 h-4 mr-1" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> 中断中...`;
+            
+            try {
+                const res = await fetch('/api/cancel_generate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ outline_filename: outlineFile })
+                });
+                
+                const result = await res.json();
+                if (!res.ok) throw new Error(result.error || "中断请求失败");
+                
+                showToast("中断请求已发送", "生成过程即将停止");
+                // 刷新左侧列表，以防有新生成的进度文件
+                setTimeout(fetchRewrites, 1000);
+            } catch (err) {
+                showToast("中断失败", err.message, true);
+                console.error(err);
+            } finally {
+                btnCancelGenerate.disabled = false;
+                btnCancelGenerate.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg> 生成中... (点击中断)`;
             }
         });
 

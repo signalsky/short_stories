@@ -83,14 +83,14 @@ def write_story(json_path, target_scene_index=None, context_level=2, user_instru
 情绪点的内容绝对不能有任何修改，仅仅替换名字！
 
 【输出要求】：
-请务必只返回一个合法的 JSON 字典，包含 "角色姓名"、"重构细纲" 和 "重构情绪点" 三个 Key。不要返回任何其他内容或 Markdown 标记。
+请务必只返回一个合法的 JSON 字典，包含 "角色姓名"、"重构细纲" 和 "重构情绪点" 三个 Key。不要返回任何其他内容或 Markdown 标记，也不要加上任何前缀。你的回答必须能够直接被 json.loads 解析！
 
 示例：
 {{
   "角色姓名": {{
-    "女主": "",
-    "男主": "",
-    "女主生母": ""
+    "女主": "苏婉",
+    "男主": "顾寒城",
+    "女主生母": "林雅"
   }},
   "重构细纲": {{
     "原场景名1": "...",
@@ -106,15 +106,21 @@ def write_story(json_path, target_scene_index=None, context_level=2, user_instru
 【原情绪点列表】：
 {json.dumps(original_emotions, ensure_ascii=False, indent=2)}
 '''
-        name_response = call_dashscope_api(naming_prompt, system_prompt="你是一个专业的小说作者。")
-        step1_data = clean_and_parse_json(name_response)
-        
+        step1_data = None
+        for attempt in range(3):
+            print(f"Attempt {attempt + 1}/3 to generate names and outlines...")
+            name_response = call_dashscope_api(naming_prompt, system_prompt="你是一个专业的小说作者。必须且只能输出合法的 JSON 数据。")
+            step1_data = clean_and_parse_json(name_response)
+            if step1_data and isinstance(step1_data, dict):
+                break
+            print("Failed to parse names JSON. Retrying...")
+            
         name_map = {}
         rewritten_outlines = {}
         rewritten_emotions = []
         
         if not step1_data or not isinstance(step1_data, dict):
-            print("Failed to get names from LLM, using fallback.")
+            print("Failed to get names from LLM after 3 attempts, using fallback.")
             name_map = {role: f"[{role}的名字]" for role in core_characters}
             rewritten_outlines = original_outlines
             rewritten_emotions = original_emotions
@@ -190,10 +196,12 @@ def write_story(json_path, target_scene_index=None, context_level=2, user_instru
         if target_scene_index is not None and (i + 1) != target_scene_index:
             continue
             
-        # 如果没有传入 target_scene_index，并且当前段落已经生成过，则跳过
+        # 如果没有传入 target_scene_index，并且当前段落已经生成过且不是待生成状态，则跳过
         if target_scene_index is None and i < len(generated_paragraphs):
-            print(f"Skipping Scene {i+1}/{len(scenes_dict)}: {scene_name} (Already generated)")
-            continue
+            # 只有当段落真实存在且不是失败/占位符时才跳过
+            if not generated_paragraphs[i].startswith("【待生成") and not generated_paragraphs[i].startswith("【生成失败"):
+                print(f"Skipping Scene {i+1}/{len(scenes_dict)}: {scene_name} (Already generated)")
+                continue
         # 处理旧版本 JSON（只有数字）和新版本 JSON（字典包含目标字数和细纲）的兼容
         target_words = 0
         scene_outline = "（请根据故事线自行发挥该场景的具体剧情）"
@@ -257,6 +265,35 @@ def write_story(json_path, target_scene_index=None, context_level=2, user_instru
         if target_scene_index is not None and user_instruction:
             user_instruction_block = f"\n【用户特别修改要求（优先级最高！）】：\n{user_instruction}\n"
 
+        # 提取当前场景的四大要素（爽点、钩子、泪点、迷之操作）
+        elements_instruction = ""
+        if isinstance(scene_data, dict):
+            elements_list = []
+            missing_elements = []
+            for el_name in ["爽点", "钩子", "泪点", "迷之操作"]:
+                el_val = scene_data.get(el_name)
+                is_missing = True
+                if el_val and el_val != "无" and el_val != "[]":
+                    # 兼容字符串或列表格式
+                    if isinstance(el_val, list):
+                        if len(el_val) > 0 and el_val[0] and el_val[0] != "无":
+                            elements_list.append(f"- 【{el_name}】：\n  " + "\n  ".join([f"* {v}" for v in el_val]))
+                            is_missing = False
+                    elif isinstance(el_val, str):
+                        elements_list.append(f"- 【{el_name}】：{el_val}")
+                        is_missing = False
+                
+                if is_missing:
+                    missing_elements.append(el_name)
+                
+            elements_instruction = "9. 【关键要素设定】：\n"
+            if elements_list:
+                elements_instruction += "   以下是原小说在该场景中的精彩设定，你必须在重写时巧妙地将它们融入剧情中，**绝对不能丢失这些关键要素！**\n   " + "\n   ".join(elements_list) + "\n"
+            
+            # 温和地建议大模型补充缺失的要素，不强制
+            if missing_elements:
+                elements_instruction += f"   （建议）：当前场景原剧情缺乏以下要素：【{'、'.join(missing_elements)}】。如果在不破坏剧情合理性的前提下，你可以发挥创造力，自然地为其补充一些设定（例如顺手埋个悬念钩子、或制造一点爽点/泪点），让剧情更好看。但不强制，顺其自然即可。\n"
+
         write_prompt = f'''你正在创作一篇爆款短篇小说，现在需要撰写其中的一个场景片段。
 你的写作核心是【用事件体现情绪】。必须以事件描写和动作描写为主，极少使用纯心理描写。让情绪通过具体的事件冲突、人物的动作和神态自然流露出来，事件服务于情绪。
 
@@ -276,11 +313,19 @@ def write_story(json_path, target_scene_index=None, context_level=2, user_instru
 6. 本次场景必须体现的核心情绪是：【{scene_emotion}】（必须将情绪融入到具体的事件、对话和动作中，不要大段的内心独白）
 7. 目标字数要求：请严格控制在【{target_words}字】左右！不要太短，必须通过人物动作、对话和事件细节把字数拉满！
 8. 注意使用真实姓名，不要出现“女主”、“男主”等代称。但是称呼女主自己时用“我”。
+{elements_instruction}
 
 请直接输出小说正文内容，不要包含任何多余的开头问候、分析说明或字数统计！直接开始写正文！
 '''
         
-        scene_text = call_dashscope_api(write_prompt, system_prompt="你是一个专业的小说作家，擅长通过具体的事件和动作细节来展现情绪，极少使用纯心理描写。")
+        scene_text = None
+        for attempt in range(3):
+            print(f"Attempt {attempt + 1}/3 to generate scene...")
+            scene_text = call_dashscope_api(write_prompt, system_prompt="你是一个专业的小说作家，擅长通过具体的事件和动作细节来展现情绪，极少使用纯心理描写。")
+            if scene_text:
+                break
+            print("Generation failed. Retrying...")
+
         if scene_text:
             # 清理可能的 markdown 标记
             scene_text = re.sub(r'```[a-zA-Z]*\n', '', scene_text)
@@ -303,6 +348,14 @@ def write_story(json_path, target_scene_index=None, context_level=2, user_instru
                 json.dump(progress_data, f, ensure_ascii=False, indent=2)
                 
             if target_scene_index is not None:
+                # 单场景重写时，也要同步更新 txt 文件，这样前端才能看到最新的文本
+                try:
+                    txt_output_path = output_json_path.replace('_进度.json', '.txt')
+                    with open(txt_output_path, "w", encoding="utf-8") as f:
+                        f.write("\n\n".join(generated_paragraphs))
+                except Exception as e:
+                    print(f"Warning: Failed to update txt file during single scene rewrite: {e}")
+                    
                 # 如果是单场景测试，打印结果并退出
                 print(f"\n--- Test Generation Result for Scene {target_scene_index} ---")
                 print(scene_text)
@@ -311,14 +364,29 @@ def write_story(json_path, target_scene_index=None, context_level=2, user_instru
             
             print(f"Scene written successfully. Length: {len(scene_text)}. Progress saved.")
         else:
-            print(f"Failed to generate scene: {scene_name}. Appending placeholder.")
-            if target_scene_index is None:
-                generated_paragraphs.append(f"【生成失败的场景：{scene_name}】")
-                progress_data["generated_paragraphs"] = generated_paragraphs
-                with open(output_json_path, 'w', encoding='utf-8') as f:
-                    json.dump(progress_data, f, ensure_ascii=False, indent=2)
+            print(f"Failed to generate scene: {scene_name} after 3 attempts. Stopping generation process.")
+            
+            if len(generated_paragraphs) > i:
+                generated_paragraphs[i] = f"【生成失败的场景：{scene_name}】"
             else:
-                return
+                while len(generated_paragraphs) < i:
+                    generated_paragraphs.append("【待生成】")
+                generated_paragraphs.append(f"【生成失败的场景：{scene_name}】")
+                
+            progress_data["generated_paragraphs"] = generated_paragraphs
+            
+            # 保存已有进度并中断后续生成
+            with open(output_json_path, 'w', encoding='utf-8') as f:
+                json.dump(progress_data, f, ensure_ascii=False, indent=2)
+            if target_scene_index is not None:
+                # 单场景重写时，由于 target_scene_index 是 1-based 的，但 i 是 0-based 循环变量，
+                # 所以实际这里 target_scene_index 对应当前失败场景的话就会走这里退出。
+                import sys
+                sys.exit(1)
+            else:
+                print("Generation aborted due to repeated failures. Please try again later.")
+                import sys
+                sys.exit(1)
             
     # 5. 保存最终生成的小说文本
     print("\n--- Step 3: Saving final story ---")
