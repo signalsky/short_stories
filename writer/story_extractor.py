@@ -163,6 +163,60 @@ def extract_scene_elements(scene_name, original_text, global_storyline_str, inde
 def extract_storyline(story_path):
     print("Start execution")
     
+    # 确定输出文件路径并尝试加载断点
+    base_name = os.path.splitext(os.path.basename(story_path))[0]
+    writer_dir = os.path.dirname(os.path.abspath(__file__))
+    outline_dir = os.path.join(writer_dir, "大纲")
+    if not os.path.exists(outline_dir):
+        os.makedirs(outline_dir)
+        
+    output_file_path = os.path.join(outline_dir, f"{base_name}.json")
+    
+    final_result = {}
+    if os.path.exists(output_file_path):
+        try:
+            with open(output_file_path, 'r', encoding='utf-8') as f:
+                final_result = json.load(f)
+            print(f"Loaded checkpoint from {output_file_path}")
+        except Exception as e:
+            print(f"Failed to load checkpoint: {e}")
+
+    def save_checkpoint():
+        with open(output_file_path, "w", encoding="utf-8") as f:
+            json.dump(final_result, f, ensure_ascii=False, indent=2)
+        print(f"Checkpoint saved to {output_file_path}")
+        
+    def remove_empty_values(data):
+        """递归清理字典中值为'无'、'无。'或空字符串的项，直接删除该 Key"""
+        if isinstance(data, dict):
+            new_dict = {}
+            for k, v in data.items():
+                if isinstance(v, str) and v.strip() in ["无", "无。", "", "没有", "无明显情绪"]:
+                    continue  # 直接跳过，不加入 new_dict
+                
+                if isinstance(v, (dict, list)):
+                    cleaned_v = remove_empty_values(v)
+                    if cleaned_v:  # 如果清理后不是空字典/空列表，则保留
+                        new_dict[k] = cleaned_v
+                else:
+                    new_dict[k] = v
+            return new_dict
+        elif isinstance(data, list):
+            new_list = []
+            for item in data:
+                if isinstance(item, str) and item.strip() in ["无", "无。", "", "没有", "无明显情绪"]:
+                    continue
+                
+                if isinstance(item, (dict, list)):
+                    cleaned_item = remove_empty_values(item)
+                    if cleaned_item:
+                        new_list.append(cleaned_item)
+                else:
+                    new_list.append(item)
+            return new_list
+        else:
+            return data
+
     # 2. 加载小说内容
     try:
         with open(story_path, 'r', encoding='utf-8') as f:
@@ -188,8 +242,9 @@ def extract_storyline(story_path):
             # 从原始文本中剔除引子，只保留正文内容供后续提取
             story_content = story_content[match.end():].strip()
 
-    # 3. 构建 Prompt
-    prompt = '''你是一个专业的小说分析助手。
+    # 3. 提取故事线
+    if "故事线提取" not in final_result:
+        prompt = '''你是一个专业的小说分析助手。
 请阅读下面的短篇小说，并提取故事摘要（完整故事线）。
 
 【重要硬性要求】：
@@ -222,65 +277,39 @@ def extract_storyline(story_path):
 【小说内容】：
 ''' + story_content
 
-    print("Sending request to Aliyun DashScope API for storyline via curl...")
-    storyline_content = call_dashscope_api(prompt, system_prompt="你是一个专业的小说分析Agent。")
-    
-    final_result = {}
-    
-    def remove_empty_values(data):
-        """递归清理字典中值为'无'、'无。'或空字符串的项，直接删除该 Key"""
-        if isinstance(data, dict):
-            new_dict = {}
-            for k, v in data.items():
-                if isinstance(v, str) and v.strip() in ["无", "无。", "", "没有", "无明显情绪"]:
-                    continue  # 直接跳过，不加入 new_dict
-                
-                if isinstance(v, (dict, list)):
-                    cleaned_v = remove_empty_values(v)
-                    if cleaned_v:  # 如果清理后不是空字典/空列表，则保留
-                        new_dict[k] = cleaned_v
-                else:
-                    new_dict[k] = v
-            return new_dict
-        elif isinstance(data, list):
-            new_list = []
-            for item in data:
-                if isinstance(item, str) and item.strip() in ["无", "无。", "", "没有", "无明显情绪"]:
-                    continue
-                
-                if isinstance(item, (dict, list)):
-                    cleaned_item = remove_empty_values(item)
-                    if cleaned_item:
-                        new_list.append(cleaned_item)
-                else:
-                    new_list.append(item)
-            return new_list
-        else:
-            return data
-    
-    if storyline_content:
-        try:
-            storyline_json = json.loads(storyline_content)
-            final_result.update(storyline_json)
-            print("Successfully parsed Storyline JSON.")
-        except Exception as e:
-            print("Failed to parse Storyline JSON:", e)
-            
-            # 尝试提取被 markdown 包裹的 json
-            import re
-            match = re.search(r'```json\s*(.*?)\s*```', storyline_content, re.DOTALL)
-            if match:
-                try:
-                    storyline_json = json.loads(match.group(1))
-                    final_result.update(storyline_json)
-                    print("Successfully parsed Storyline JSON from markdown.")
-                except Exception as e2:
-                    final_result["故事线提取"] = storyline_content
-            else:
-                final_result["故事线提取"] = storyline_content
+        print("Sending request to Aliyun DashScope API for storyline via curl...")
+        storyline_content = call_dashscope_api(prompt, system_prompt="你是一个专业的小说分析Agent。")
         
-        # 4. 场景切分、情绪点提取与结构优化 (一次 LLM 调用合并完成)
+        if storyline_content:
+            try:
+                storyline_json = json.loads(storyline_content)
+                final_result.update(storyline_json)
+                print("Successfully parsed Storyline JSON.")
+            except Exception as e:
+                print("Failed to parse Storyline JSON:", e)
+                match_json = re.search(r'```json\s*(.*?)\s*```', storyline_content, re.DOTALL)
+                if match_json:
+                    try:
+                        storyline_json = json.loads(match_json.group(1))
+                        final_result.update(storyline_json)
+                        print("Successfully parsed Storyline JSON from markdown.")
+                    except Exception as e2:
+                        final_result["故事线提取"] = storyline_content
+                else:
+                    final_result["故事线提取"] = storyline_content
+            save_checkpoint()
+        else:
+            print("Failed to extract storyline.")
+            return None
+            
+    if "故事线提取" not in final_result:
+        print("Storyline not found, aborting.")
+        return None
+
+    # 4. 场景切分、情绪点提取与结构优化
+    if "_scenes_extracted" not in final_result:
         print("Start splitting scenes, extracting emotions and optimizing structure...")
+        storyline_str = json.dumps(final_result.get("故事线提取", {}), ensure_ascii=False)
         split_prompt = f'''你是一个专业的小说分析助手与网文主编。请结合以下小说的【完整故事线】和【小说原文】，完成以下两个核心任务：
 
 【任务一：小说结构诊断与优化建议】
@@ -323,7 +352,7 @@ def extract_storyline(story_path):
 }}
 
 【完整故事线】：
-{storyline_content}
+{storyline_str}
 
 【小说原文】：
 {story_content}
@@ -356,19 +385,16 @@ def extract_storyline(story_path):
             if isinstance(split_data, dict) and "场景切分与建议" in split_data:
                 split_data = split_data["场景切分与建议"]
             
-            # 如果大模型返回的是列表，我们手动将其转换为需要的字典格式
             if isinstance(split_data, list):
                 for item in split_data:
                     if isinstance(item, dict):
                         scene_name = item.get("场景名", "")
                         original_text = item.get("参考原文", "")
-                        # 目标字数直接由参考原文统计得出
                         target_words = len(original_text) if original_text else item.get("目标字数", 0)
                         outline = item.get("剧情细纲", "")
                         emotion_point = item.get("情绪点", "")
                         if scene_name:
                             new_split_dict[scene_name] = {"目标字数": target_words, "情绪点": emotion_point, "剧情细纲": outline, "参考原文": original_text}
-            # 如果大模型返回的是字典，提取目标字数和细纲
             elif isinstance(split_data, dict):
                 for k, v in split_data.items():
                     if isinstance(v, dict):
@@ -383,30 +409,27 @@ def extract_storyline(story_path):
                         except:
                             pass
                             
-            # 替换为纯净的字典
             if new_split_dict:
                 final_result["场景切分与建议"] = new_split_dict
 
-        # 在保存前，递归清理所有值为“无”或“无。”的空场景/情绪
+        # 清理空数据并标记完成
         final_result = remove_empty_values(final_result)
-        
-        # --- 新增逻辑：对超过 900 字的场景进行二次 LLM 拆分（多线程处理） ---
+        final_result["_scenes_extracted"] = True
+        save_checkpoint()
+
+    # --- 新增逻辑：对超过 900 字的场景进行二次 LLM 拆分（多线程处理） ---
+    if "_large_scenes_processed" not in final_result:
         if "场景切分与建议" in final_result and isinstance(final_result["场景切分与建议"], dict):
             scenes = final_result["场景切分与建议"]
             new_scenes = {}
             needs_update = False
             
-            # 计算总字数，用于估算每个场景在原文中的位置
             total_words_in_dict = sum([v.get("目标字数", 0) for v in scenes.values() if isinstance(v, dict)])
             current_word_count = 0
             
             import concurrent.futures
-            
-            # 收集需要拆分的任务和不需要拆分的任务，以保证最终顺序
-            # 列表元素格式: {"type": "normal", "name": name, "data": data} 或 {"type": "large", "name": name, "data": data, "future": future}
             processing_tasks = []
             
-            # 创建线程池
             with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
                 for scene_name, scene_data in scenes.items():
                     if not isinstance(scene_data, dict):
@@ -414,10 +437,8 @@ def extract_storyline(story_path):
                         continue
                         
                     target_words = scene_data.get("目标字数", 0)
-                    
                     if target_words > 900:
                         needs_update = True
-                        # 提交到线程池
                         future = executor.submit(
                             process_large_scene, 
                             scene_name, 
@@ -432,90 +453,75 @@ def extract_storyline(story_path):
                         
                     current_word_count += target_words
                 
-                # 收集并按原顺序合并结果
                 if needs_update:
                     for task in processing_tasks:
                         if task["type"] == "normal":
                             new_scenes[task["name"]] = task["data"]
                         elif task["type"] == "large":
-                            # 等待线程执行完毕并获取结果
                             try:
                                 sub_scenes_list = task["future"].result()
                                 for sub_name, sub_data in sub_scenes_list:
                                     new_scenes[sub_name] = sub_data
                             except Exception as e:
                                 print(f"Error processing large scene '{task['name']}': {e}")
-                                # 如果报错，降级保留原场景
                                 new_scenes[task["name"]] = scenes.get(task["name"], {})
                                 
                     final_result["场景切分与建议"] = new_scenes
-        # --- 二次拆分逻辑结束 ---
+            final_result["_large_scenes_processed"] = True
+            save_checkpoint()
 
-        # --- 新增逻辑：遍历所有场景，针对参考原文逐个调用大模型提取【爽点、钩子、泪点、迷之操作】 ---
-        if "场景切分与建议" in final_result and isinstance(final_result["场景切分与建议"], dict):
-            scenes = final_result["场景切分与建议"]
-            print(f"\nStart extracting elements (爽点/钩子/泪点/迷之操作) for {len(scenes)} scenes...")
+    # --- 新增逻辑：遍历所有场景，针对参考原文逐个调用大模型提取【爽点、钩子、泪点、迷之操作】 ---
+    if "场景切分与建议" in final_result and isinstance(final_result["场景切分与建议"], dict):
+        scenes = final_result["场景切分与建议"]
+        global_storyline_str = json.dumps(final_result.get("故事线提取", {}), ensure_ascii=False)
+        
+        needs_elements = []
+        for i, (scene_name, scene_data) in enumerate(scenes.items()):
+            if not isinstance(scene_data, dict):
+                continue
+            # 检查是否已经提取过要素
+            if any(k in scene_data for k in ["爽点", "钩子", "泪点", "迷之操作"]):
+                continue
+                
+            original_text = scene_data.get("参考原文", "")
+            if not original_text or len(original_text) < 20:
+                continue
+                
+            needs_elements.append((scene_name, original_text, i + 1))
             
-            # 将全局故事线转为字符串，作为上下文提供给大模型
-            global_storyline_str = json.dumps(final_result.get("故事线提取", {}), ensure_ascii=False)
-            
-            # 使用多线程并发提取四大要素
+        if needs_elements:
+            print(f"\nStart extracting elements (爽点/钩子/泪点/迷之操作) for {len(needs_elements)} scenes...")
+            import concurrent.futures
             element_tasks = []
             with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-                for i, (scene_name, scene_data) in enumerate(scenes.items()):
-                    if not isinstance(scene_data, dict):
-                        continue
-                    
-                    original_text = scene_data.get("参考原文", "")
-                    if not original_text or len(original_text) < 20:
-                        continue
-                        
+                for scene_name, original_text, idx in needs_elements:
                     future = executor.submit(
                         extract_scene_elements,
                         scene_name,
                         original_text,
                         global_storyline_str,
-                        i + 1,
+                        idx,
                         len(scenes)
                     )
                     element_tasks.append((scene_name, future))
                 
-                # 收集提取结果并合并到 scene_data 中
                 for scene_name, future in element_tasks:
                     try:
                         _, extracted_data = future.result()
                         if extracted_data:
                             scenes[scene_name].update(extracted_data)
+                            # 每次成功提取后保存断点，防止意外中断丢失进度
+                            save_checkpoint()
                     except Exception as e:
                         print(f"Error extracting elements for '{scene_name}': {e}")
                         
-        # --- 元素提取结束 ---
-
-        # 移除不需要的多余字段
-        if "字数统计总结" in final_result:
-            del final_result["字数统计总结"]
+    # 移除不需要的多余字段
+    if "字数统计总结" in final_result:
+        del final_result["字数统计总结"]
         
-        # 尝试获取书名作为文件名，如果不存在则使用默认名
-        book_title = final_result.get("书名", "result")
-        # 清理文件名中可能不合法的字符
-        import re
-        book_title = re.sub(r'[\\/*?:"<>|]', "", book_title)
-        
-        # 获取大纲目录路径
-        writer_dir = os.path.dirname(os.path.abspath(__file__))
-        outline_dir = os.path.join(writer_dir, "大纲")
-        if not os.path.exists(outline_dir):
-            os.makedirs(outline_dir)
-            
-        output_file_path = os.path.join(outline_dir, f"{book_title}.json")
-        with open(output_file_path, "w", encoding="utf-8") as f:
-            json.dump(final_result, f, ensure_ascii=False, indent=2)
-        print(f"Success! Final combined JSON written to {output_file_path}")
-        return output_file_path
-            
-    else:
-        print("Failed to extract storyline.")
-        return None
+    save_checkpoint()
+    print(f"Success! Final combined JSON written to {output_file_path}")
+    return output_file_path
 
 if __name__ == "__main__":
     import sys

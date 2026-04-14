@@ -84,6 +84,10 @@
         <header class="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-6 flex-shrink-0">
             <h2 id="mainTitle" class="text-lg font-bold text-slate-800 tracking-tight">请选择或新建生成任务</h2>
             <div id="toolbar" class="hidden items-center gap-3">
+                <button id="btnContinueGenerate" class="hidden bg-green-500 hover:bg-green-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium shadow-sm transition-colors flex items-center gap-1">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                    继续生成
+                </button>
                 <button id="btnEdit" class="text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
                     编辑内容
@@ -229,6 +233,7 @@
         
         const btnEdit = document.getElementById('btnEdit');
         const btnSave = document.getElementById('btnSave');
+        const btnContinueGenerate = document.getElementById('btnContinueGenerate');
         const editorContainer = document.getElementById('editorContainer');
         
         // 单段重写弹窗
@@ -551,6 +556,7 @@
             if (edit) {
                 btnEdit.classList.add('hidden');
                 btnSave.classList.remove('hidden');
+                btnContinueGenerate.classList.add('hidden');
                 fields.forEach(f => {
                     f.readOnly = false;
                     f.classList.remove('readonly');
@@ -559,6 +565,23 @@
             } else {
                 btnEdit.classList.remove('hidden');
                 btnSave.classList.add('hidden');
+                
+                // 检查是否未生成完成
+                if (currentJsonData) {
+                    const paragraphs = currentJsonData['generated_paragraphs'] || [];
+                    const outlines = currentJsonData['rewritten_outlines'] || {};
+                    const outlineKeys = Object.keys(outlines);
+                    const isIncomplete = paragraphs.length < outlineKeys.length || paragraphs.some(p => p.startsWith('【待生成') || p.startsWith('【生成失败'));
+                    
+                    if (isIncomplete) {
+                        btnContinueGenerate.classList.remove('hidden');
+                    } else {
+                        btnContinueGenerate.classList.add('hidden');
+                    }
+                } else {
+                    btnContinueGenerate.classList.add('hidden');
+                }
+                
                 fields.forEach(f => {
                     f.readOnly = true;
                     f.classList.add('readonly');
@@ -770,6 +793,97 @@
             } finally {
                 btnConfirmRewrite.disabled = false;
                 btnConfirmRewrite.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg> 开始重写`;
+            }
+        });
+
+        let isContinuing = false;
+        
+        // 继续生成功能
+        btnContinueGenerate.addEventListener('click', async () => {
+            if (!currentFilename || !currentJsonData) return;
+            
+            // 提示后端使用原大纲文件进行续写
+            let outlineFile = null;
+            
+            // 1. 优先使用 JSON 中记录的源文件名（新生成的都会有这个字段）
+            if (currentJsonData.source_outline_filename) {
+                outlineFile = currentJsonData.source_outline_filename;
+            } else {
+                // 2. 如果是旧数据没有这个字段，尝试回退到之前的推断逻辑
+                outlineFile = currentFilename.replace('_进度.json', '.json');
+                const options = Array.from(outlineSelect.options).map(opt => opt.value).filter(val => val);
+                
+                let matchedFile = options.find(opt => opt === outlineFile);
+                if (!matchedFile) {
+                    const safePrefix = currentFilename.replace('_进度.json', '');
+                    matchedFile = options.find(opt => {
+                        const safeOpt = opt.replace('.json', '').replace(/[\\/*?:"<>|]/g, "");
+                        return safeOpt === safePrefix;
+                    });
+                }
+                if (matchedFile) outlineFile = matchedFile;
+            }
+            
+            if (!outlineFile) {
+                showToast("继续生成失败", "找不到对应的大纲文件，请检查大纲目录是否存在源文件。", true);
+                return;
+            }
+            
+            if (isContinuing) {
+                // 执行中断
+                if (!confirm("确定要打断当前的续写任务吗？已成功生成并保存的部分将会保留。")) return;
+                
+                btnContinueGenerate.disabled = true;
+                btnContinueGenerate.innerHTML = `<svg class="animate-spin w-4 h-4 mr-1" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> 中断中...`;
+                
+                try {
+                    const res = await fetch('/api/cancel_generate', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ outline_filename: outlineFile })
+                    });
+                    if (!res.ok) throw new Error("中断请求失败");
+                    showToast("中断请求已发送", "生成过程即将停止");
+                } catch (err) {
+                    showToast("中断失败", err.message, true);
+                }
+                return;
+            }
+            
+            isContinuing = true;
+            const originalHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg> 继续生成`;
+            
+            btnContinueGenerate.innerHTML = `<svg class="animate-spin w-4 h-4 mr-1" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> 续写中... (点击中断)`;
+            btnContinueGenerate.classList.replace('bg-green-500', 'bg-red-500');
+            btnContinueGenerate.classList.replace('hover:bg-green-600', 'hover:bg-red-600');
+            
+            showToast("继续生成", "正在从断点处继续生成，请稍候...");
+            
+            try {
+                const res = await fetch('/api/generate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ outline_filename: outlineFile })
+                });
+
+                const result = await res.json();
+                if (!res.ok) throw new Error(result.error || "生成失败");
+
+                showToast("生成成功", "剩余小说段落已生成完毕");
+                
+            } catch (err) {
+                showToast(err.message.includes("中断") ? "已中断" : "生成失败", err.message, true);
+                console.error(err);
+            } finally {
+                isContinuing = false;
+                btnContinueGenerate.disabled = false;
+                btnContinueGenerate.innerHTML = originalHTML;
+                btnContinueGenerate.classList.replace('bg-red-500', 'bg-green-500');
+                btnContinueGenerate.classList.replace('hover:bg-red-600', 'hover:bg-green-600');
+                
+                // 无论成功还是失败/中断，都重新加载进度以刷新界面
+                const activeBtn = document.querySelector(`button[data-filename="${currentFilename}"]`);
+                if (activeBtn) loadRewrite(currentFilename, activeBtn);
             }
         });
 

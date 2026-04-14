@@ -52,6 +52,9 @@ def write_story(json_path, target_scene_index=None, context_level=2, user_instru
             print(f"Loaded existing progress from {output_json_path}")
         except Exception as e:
             print(f"Failed to load existing progress: {e}")
+            
+    # 记录原始大纲文件名，方便前端进行续写时能找到源文件
+    progress_data["source_outline_filename"] = os.path.basename(json_path)
     
     # 3. 第一次 LLM 调用：为角色取名，并将大纲/情绪点中的代称替换为真实姓名
     print("\n--- Step 1: Assigning real names to characters ---")
@@ -286,9 +289,9 @@ def write_story(json_path, target_scene_index=None, context_level=2, user_instru
                 if is_missing:
                     missing_elements.append(el_name)
                 
-            elements_instruction = "9. 【关键要素设定】：\n"
+            elements_instruction = "9. 【核心看点与张力设计（极其重要）】：\n"
             if elements_list:
-                elements_instruction += "   以下是原小说在该场景中的精彩设定，你必须在重写时巧妙地将它们融入剧情中，**绝对不能丢失这些关键要素！**\n   " + "\n   ".join(elements_list) + "\n"
+                elements_instruction += "   🚨🚨🚨【强制要求】：以下要素是当前场景的灵魂！你必须通过【具体的冲突、人物动作和对话】将它们**自然且隐蔽**地融入剧情中。绝不能生硬地贴标签或直接陈述，而是要让读者在阅读事件的发展时自己体会到这些看点。如果遗漏任何一个要素，本次写作将被判定为严重失败！请务必重点刻画：\n   " + "\n   ".join(elements_list) + "\n"
             
             # 温和地建议大模型补充缺失的要素，不强制
             if missing_elements:
@@ -321,7 +324,7 @@ def write_story(json_path, target_scene_index=None, context_level=2, user_instru
         scene_text = None
         for attempt in range(3):
             print(f"Attempt {attempt + 1}/3 to generate scene...")
-            scene_text = call_dashscope_api(write_prompt, system_prompt="你是一个专业的小说作家，擅长通过具体的事件和动作细节来展现情绪，极少使用纯心理描写。")
+            scene_text = call_dashscope_api(write_prompt, system_prompt="你是一个专业的小说作家，擅长通过具体的事件和动作细节来展现情绪，极少使用纯心理描写。你会极度重视并严格执行剧情中设定的'泪点'、'爽点'、'钩子'和'迷之操作'要素，绝不遗漏。")
             if scene_text:
                 break
             print("Generation failed. Retrying...")
