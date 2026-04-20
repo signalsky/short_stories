@@ -352,7 +352,7 @@
             editorContainer.innerHTML = '';
             
             // 顶级字段（除了特定的长字典外）
-            const topLevelKeys = Object.keys(data).filter(k => k !== '人物性格' && k !== '故事线提取' && k !== '情绪点提取' && k !== '场景切分与建议');
+            const topLevelKeys = Object.keys(data).filter(k => k !== '人物性格' && k !== '人物人设' && k !== '故事线提取' && k !== '情绪点提取' && k !== '场景切分与建议');
             
             // 1. 渲染基本信息卡片
             if (topLevelKeys.length > 0) {
@@ -363,11 +363,13 @@
                 editorContainer.appendChild(basicCard);
             }
             
-            // 2. 渲染人物性格
-            if (data['人物性格']) {
-                const charCard = createCard('人物性格');
-                for (const [role, desc] of Object.entries(data['人物性格'])) {
-                    charCard.appendChild(createField(role, desc, `人物性格.${role}`));
+            // 2. 渲染人物性格/人设
+            const charData = data['人物人设'] || data['人物性格'];
+            if (charData) {
+                const charCard = createCard(data['人物人设'] ? '人物人设' : '人物性格');
+                const charKey = data['人物人设'] ? '人物人设' : '人物性格';
+                for (const [role, desc] of Object.entries(charData)) {
+                    charCard.appendChild(createField(role, desc, `${charKey}.${role}`));
                 }
                 editorContainer.appendChild(charCard);
             }
@@ -500,12 +502,13 @@
                         sceneBlock.appendChild(createField('', sceneData['剧情细纲'], `场景切分与建议.${sceneName}.剧情细纲`, true, true));
                     }
                     
-                    // 新增：渲染爽点、钩子、泪点、迷之操作
-                    const elements = ['爽点', '钩子', '泪点', '迷之操作'];
+                    // 新增：渲染爽点、钩子、泪点、虐点、迷之操作
+                    const elements = ['爽点', '钩子', '泪点', '虐点', '迷之操作'];
                     const elementColors = {
                         '爽点': 'text-red-500 bg-red-50 border-red-200',
                         '钩子': 'text-purple-600 bg-purple-50 border-purple-200',
                         '泪点': 'text-blue-500 bg-blue-50 border-blue-200',
+                        '虐点': 'text-rose-500 bg-rose-50 border-rose-200',
                         '迷之操作': 'text-orange-500 bg-orange-50 border-orange-200'
                     };
                     
