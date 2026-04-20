@@ -296,16 +296,16 @@ def write_story(json_path, target_scene_index=None, context_level=2, user_instru
                 if is_missing:
                     missing_elements.append(el_name)
                 
-            elements_instruction = "9. 【核心看点与张力设计（极其重要）】：\n"
+            elements_instruction = "9. 【核心看点与张力设计（极其重要，但必须克制）】：\n"
             if elements_list:
-                elements_instruction += "   🚨🚨🚨【强制要求】：以下要素是当前场景的灵魂！你必须通过【具体的冲突、人物动作和对话】将它们**自然且隐蔽**地融入剧情中。绝不能生硬地贴标签或直接陈述，而是要让读者在阅读事件的发展时自己体会到这些看点。如果遗漏任何一个要素，本次写作将被判定为严重失败！请务必重点刻画：\n   " + "\n   ".join(elements_list) + "\n"
+                elements_instruction += "   🚨🚨🚨【强制要求】：以下要素是当前场景的核心！你必须通过【具体的冲突、人物动作和对话】将它们**自然且隐蔽**地融入剧情中。**绝不能生硬地贴标签，坚决抵制堆砌华丽的形容词或副词。不能为了体现情绪而写出夸张、歇斯底里、用力过猛的台词或动作（例如“瞳孔地震”、“疯狂咆哮”、“撕心裂肺”等）**。情绪应该是克制而细腻的，要让读者在阅读事件的发展时自己体会到张力。如果遗漏任何一个要素，本次写作将被判定为严重失败！请务必重点刻画：\n   " + "\n   ".join(elements_list) + "\n"
             
             # 温和地建议大模型补充缺失的要素，不强制
             if missing_elements:
                 elements_instruction += f"   （建议）：当前场景原剧情缺乏以下要素：【{'、'.join(missing_elements)}】。如果在不破坏剧情合理性的前提下，你可以发挥创造力，自然地为其补充一些设定（例如顺手埋个悬念钩子、或制造一点爽点/泪点/虐点），让剧情更好看。但不强制，顺其自然即可。\n"
 
         write_prompt = f'''你正在创作一篇爆款短篇小说，现在需要撰写其中的一个场景片段。
-你的写作核心是【用事件体现情绪】。必须以事件描写和动作描写为主，极少使用纯心理描写。让情绪通过具体的事件冲突、人物的动作和神态自然流露出来，事件服务于情绪。
+你的写作核心是【用事件体现情绪，行文必须克制内敛】。必须以事件描写和动作描写为主，极少使用纯心理描写。让情绪通过具体的事件冲突、人物的动作和神态自然流露出来，**坚决抵制华丽辞藻的堆砌、滥用形容词和成语。拒绝歇斯底里、大吼大叫等用力过猛的网文套路表达**。事件服务于情绪，而情绪的张力在于留白。
 
 【全局公共设定（不可偏离）】：
 {public_context}
@@ -331,7 +331,7 @@ def write_story(json_path, target_scene_index=None, context_level=2, user_instru
         scene_text = None
         for attempt in range(3):
             print(f"Attempt {attempt + 1}/3 to generate scene...")
-            scene_text = call_dashscope_api(write_prompt, system_prompt="你是一个专业的小说作家，擅长通过具体的事件和动作细节来展现情绪，极少使用纯心理描写。你会极度重视并严格执行剧情中设定的'泪点'、'虐点'、'爽点'、'钩子'和'迷之操作'要素，绝不遗漏。")
+            scene_text = call_dashscope_api(write_prompt, system_prompt="你是一个专业的小说作家，擅长通过具体的事件和动作细节来展现情绪，极少使用纯心理描写。你深知“高级的情绪在于克制与留白”，坚决抵制堆砌华丽的形容词、成语，坚决抵制歇斯底里、大吼大叫等用力过猛的狗血网文表达。你会极度重视并严格执行剧情中设定的'泪点'、'虐点'、'爽点'、'钩子'和'迷之操作'要素，将它们自然、克制地融入情节。")
             if scene_text:
                 break
             print("Generation failed. Retrying...")
