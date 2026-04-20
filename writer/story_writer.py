@@ -275,12 +275,12 @@ def write_story(json_path, target_scene_index=None, context_level=2, user_instru
         if user_instruction:
             user_instruction_block = f"\n【用户特别修改要求（优先级最高！）】：\n{user_instruction}\n"
 
-        # 提取当前场景的四大要素（爽点、钩子、泪点、迷之操作）
+        # 提取当前场景的四大要素（爽点、钩子、泪点、虐点、迷之操作）
         elements_instruction = ""
         if isinstance(scene_data, dict):
             elements_list = []
             missing_elements = []
-            for el_name in ["爽点", "钩子", "泪点", "迷之操作"]:
+            for el_name in ["爽点", "钩子", "泪点", "虐点", "迷之操作"]:
                 el_val = scene_data.get(el_name)
                 is_missing = True
                 if el_val and el_val != "无" and el_val != "[]":
@@ -302,7 +302,7 @@ def write_story(json_path, target_scene_index=None, context_level=2, user_instru
             
             # 温和地建议大模型补充缺失的要素，不强制
             if missing_elements:
-                elements_instruction += f"   （建议）：当前场景原剧情缺乏以下要素：【{'、'.join(missing_elements)}】。如果在不破坏剧情合理性的前提下，你可以发挥创造力，自然地为其补充一些设定（例如顺手埋个悬念钩子、或制造一点爽点/泪点），让剧情更好看。但不强制，顺其自然即可。\n"
+                elements_instruction += f"   （建议）：当前场景原剧情缺乏以下要素：【{'、'.join(missing_elements)}】。如果在不破坏剧情合理性的前提下，你可以发挥创造力，自然地为其补充一些设定（例如顺手埋个悬念钩子、或制造一点爽点/泪点/虐点），让剧情更好看。但不强制，顺其自然即可。\n"
 
         write_prompt = f'''你正在创作一篇爆款短篇小说，现在需要撰写其中的一个场景片段。
 你的写作核心是【用事件体现情绪】。必须以事件描写和动作描写为主，极少使用纯心理描写。让情绪通过具体的事件冲突、人物的动作和神态自然流露出来，事件服务于情绪。
@@ -331,7 +331,7 @@ def write_story(json_path, target_scene_index=None, context_level=2, user_instru
         scene_text = None
         for attempt in range(3):
             print(f"Attempt {attempt + 1}/3 to generate scene...")
-            scene_text = call_dashscope_api(write_prompt, system_prompt="你是一个专业的小说作家，擅长通过具体的事件和动作细节来展现情绪，极少使用纯心理描写。你会极度重视并严格执行剧情中设定的'泪点'、'爽点'、'钩子'和'迷之操作'要素，绝不遗漏。")
+            scene_text = call_dashscope_api(write_prompt, system_prompt="你是一个专业的小说作家，擅长通过具体的事件和动作细节来展现情绪，极少使用纯心理描写。你会极度重视并严格执行剧情中设定的'泪点'、'虐点'、'爽点'、'钩子'和'迷之操作'要素，绝不遗漏。")
             if scene_text:
                 break
             print("Generation failed. Retrying...")

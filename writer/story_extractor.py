@@ -112,7 +112,7 @@ def extract_scene_elements(scene_name, original_text, global_storyline_str, inde
     print(f"  [{index}/{total}] Extracting elements for scene: {scene_name} ...")
     
     element_prompt = f'''你是一个专业的小说分析师。请结合下面提供的【全局故事线上下文】，仔细阅读该小说某个具体场景的【完整的参考原文切分】。
-你的任务是：从这段【完整的参考原文切分】中提取以下四个关键信息要素：【爽点】、【钩子】、【泪点】、【迷之操作】。
+你的任务是：从这段【完整的参考原文切分】中提取以下五个关键信息要素：【爽点】、【钩子】、【泪点】、【虐点】、【迷之操作】。
 
 【提取要求】：
 1. 绝对不要出现主角或配角的真实姓名，全部统一使用角色代称（如：女主、女配、男主等）。
@@ -124,6 +124,7 @@ def extract_scene_elements(scene_name, original_text, global_storyline_str, inde
 - 钩子：给人期待感，有反转，有悬念，能吸引读者迫不及待继续往下看的情节。例如：“男主哭了，对我疯狂表白，拒绝跟我离婚。女配这时走了出来。” 或者 “但是她却不知道，我家手艺一脉传两支，我姐姐化的是活人阳妆，我化的是死人阴妆。”
 - 爽点：打脸反派、反转后主角扬眉吐气、反派吃瘪、获得极大优势的瞬间。
 - 泪点：极度委屈、绝望、令人心疼的情感爆发点。
+- 虐点：让读者感到心痛、无奈、主角被误解或遭受不公对待的虐心情节。
 - 迷之操作：角色做出的让人极其不解、降智或出人意料的行为。
 
 【JSON 格式要求】：
@@ -131,6 +132,7 @@ def extract_scene_elements(scene_name, original_text, global_storyline_str, inde
   "爽点": ["..."],
   "钩子": ["..."],
   "泪点": [],
+  "虐点": ["..."],
   "迷之操作": ["...", "..."]
 }}
 
@@ -146,7 +148,7 @@ def extract_scene_elements(scene_name, original_text, global_storyline_str, inde
     if element_content:
         element_json = clean_and_parse_json(element_content)
         if element_json:
-            for key in ["爽点", "钩子", "泪点", "迷之操作"]:
+            for key in ["爽点", "钩子", "泪点", "虐点", "迷之操作"]:
                 val = element_json.get(key)
                 if isinstance(val, list) and len(val) > 0 and val[0] and val[0] != "无":
                     extracted_data[key] = val
