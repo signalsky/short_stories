@@ -247,6 +247,7 @@ def start_generation():
     try:
         data = request.json
         outline_filename = data.get('outline_filename')
+        instruction = data.get('instruction', '')
         
         if not outline_filename:
             return jsonify({"error": "No outline selected"}), 400
@@ -266,9 +267,13 @@ def start_generation():
         env = os.environ.copy()
         env['PYTHONIOENCODING'] = 'utf-8'
         
+        cmd = ['python', writer_script, outline_path]
+        if instruction:
+            cmd.extend(['--instruction', instruction])
+            
         # 使用 subprocess.Popen 启动进程，以便支持打断
         process = subprocess.Popen(
-            ['python', writer_script, outline_path],
+            cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=env

@@ -106,7 +106,19 @@
             <div id="viewCreate" class="max-w-2xl mx-auto hidden">
                 <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-8">
                     <h3 class="text-xl font-bold text-slate-800 mb-2">新建生成任务</h3>
-                    <p class="text-slate-500 text-sm mb-8">请从已提取的大纲中选择一本，系统将根据大纲的场景切分，逐段生成全新的小说内容。</p>
+                    <p class="text-slate-500 text-sm mb-6">请从已提取的大纲中选择一本，系统将根据大纲的场景切分，逐段生成全新的小说内容。</p>
+                    
+                    <div class="bg-blue-50 border border-blue-100 rounded-xl p-4 mb-8">
+                        <h4 class="text-sm font-bold text-blue-800 mb-2 flex items-center gap-1">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                            如何填写重写建议？
+                        </h4>
+                        <ul class="text-sm text-blue-700 space-y-1.5 list-disc list-inside ml-2">
+                            <li><strong>更换背景：</strong>可以将现代都市替换为年代文、古代言情、仙侠修真等背景。</li>
+                            <li><strong>重塑人设：</strong>保留核心冲突，但给角色赋予新身份自带矛盾（如：霸总换特种兵、平凡女主换战地医生、白月光换成男主牺牲战友的妹妹）。</li>
+                            <li><strong>融入新元素：</strong>例如增加“弹幕”或“读心术”设定，让女主从被动承受变为拥有上帝视角，更直观地放大委屈感与男主带来的伤害。</li>
+                        </ul>
+                    </div>
                     
                     <form id="generateForm" class="space-y-6">
                         <div class="space-y-2">
@@ -119,6 +131,11 @@
                                     <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
                                 </div>
                             </div>
+                        </div>
+
+                        <div class="space-y-2">
+                            <label class="block text-sm font-semibold text-slate-700" for="globalInstruction">全局重写建议 (可选)</label>
+                            <textarea id="globalInstruction" rows="4" placeholder="例如：将背景改为八零年代，给女主加上能听到男主心声的读心术..." class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-slate-800 leading-relaxed resize-y"></textarea>
                         </div>
 
                         <div class="flex items-center justify-end pt-4">
@@ -638,17 +655,23 @@
             e.preventDefault();
             const outlineFile = outlineSelect.value;
             if (!outlineFile) return;
+            
+            const globalInstruction = document.getElementById('globalInstruction').value.trim();
 
             btnSubmitGenerate.classList.add('hidden');
             btnCancelGenerate.classList.remove('hidden');
             outlineSelect.disabled = true;
+            document.getElementById('globalInstruction').disabled = true;
             generatingStatus.classList.remove('hidden');
 
             try {
                 const res = await fetch('/api/generate', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ outline_filename: outlineFile })
+                    body: JSON.stringify({ 
+                        outline_filename: outlineFile,
+                        instruction: globalInstruction
+                    })
                 });
 
                 const result = await res.json();
@@ -670,6 +693,7 @@
                 btnCancelGenerate.classList.add('hidden');
                 btnSubmitGenerate.classList.remove('hidden');
                 outlineSelect.disabled = false;
+                document.getElementById('globalInstruction').disabled = false;
                 generatingStatus.classList.add('hidden');
             }
         });

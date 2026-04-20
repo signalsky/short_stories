@@ -17,7 +17,7 @@ def write_story(json_path, target_scene_index=None, context_level=2, user_instru
         
     book_title = story_data.get("书名", "未命名小说")
     core_characters = story_data.get("核心人物", [])
-    character_personalities = story_data.get("人物性格", {})
+    character_personalities = story_data.get("人物人设", story_data.get("人物性格", {}))
     storyline = story_data.get("故事线提取", {})
     emotions = story_data.get("情绪点提取", {})
     scenes_dict = story_data.get("场景切分与建议", {})
@@ -55,6 +55,13 @@ def write_story(json_path, target_scene_index=None, context_level=2, user_instru
             
     # 记录原始大纲文件名，方便前端进行续写时能找到源文件
     progress_data["source_outline_filename"] = os.path.basename(json_path)
+    
+    # 记录全局用户指令，方便后续续写时保持一致
+    if user_instruction:
+        progress_data["global_instruction"] = user_instruction
+    elif "global_instruction" in progress_data:
+        # 如果当前没有传指令，但之前保存过，则恢复
+        user_instruction = progress_data["global_instruction"]
     
     # 3. 第一次 LLM 调用：为角色取名，并将大纲/情绪点中的代称替换为真实姓名
     print("\n--- Step 1: Assigning real names to characters ---")
@@ -152,12 +159,12 @@ def write_story(json_path, target_scene_index=None, context_level=2, user_instru
     public_context = f'''
 【小说书名】：{book_title}
 
-【角色姓名与性格对照表】：
+【角色姓名与人设对照表】：
 '''
     for role in core_characters:
         name = name_map.get(role, role)
-        personality = character_personalities.get(role, "（未提供性格描述）")
-        public_context += f"- {role}：姓名【{name}】，性格：【{personality}】\n"
+        personality = character_personalities.get(role, "（未提供人设描述）")
+        public_context += f"- {role}：姓名【{name}】，人设：【{personality}】\n"
 
     public_context += f'''
 【完整故事线】：
@@ -265,7 +272,7 @@ def write_story(json_path, target_scene_index=None, context_level=2, user_instru
             
         # 如果用户提供了重写的额外要求，加粗强调
         user_instruction_block = ""
-        if target_scene_index is not None and user_instruction:
+        if user_instruction:
             user_instruction_block = f"\n【用户特别修改要求（优先级最高！）】：\n{user_instruction}\n"
 
         # 提取当前场景的四大要素（爽点、钩子、泪点、迷之操作）
@@ -315,7 +322,7 @@ def write_story(json_path, target_scene_index=None, context_level=2, user_instru
 5. 【核心剧情细纲（你必须按照这个细纲来推进事件）】：{scene_outline}
 6. 本次场景必须体现的核心情绪是：【{scene_emotion}】（必须将情绪融入到具体的事件、对话和动作中，不要大段的内心独白）
 7. 目标字数要求：请严格控制在【{target_words}字】左右！不要太短，必须通过人物动作、对话和事件细节把字数拉满！
-8. 注意使用真实姓名，不要出现“女主”、“男主”等代称。但是称呼女主自己时用“我”。
+8. 人物称呼要求：请根据第一人称视角，在适当的地方使用更自然、符合身份的称呼（如“婆婆”、“老公”、“我妈”等），**不要总是生硬地直呼其名**。但是绝对不要出现“女主”、“男主”这种大纲代称，称呼女主自己时用“我”。
 {elements_instruction}
 
 请直接输出小说正文内容，不要包含任何多余的开头问候、分析说明或字数统计！直接开始写正文！
