@@ -502,14 +502,13 @@
                         sceneBlock.appendChild(createField('', sceneData['剧情细纲'], `场景切分与建议.${sceneName}.剧情细纲`, true, true));
                     }
                     
-                    // 新增：渲染爽点、钩子、泪点、虐点、迷之操作
-                    const elements = ['爽点', '钩子', '泪点', '虐点', '迷之操作'];
+                    // 渲染场景要素
+                    const elements = ['爽点', '钩子', '泪点', '虐点'];
                     const elementColors = {
                         '爽点': 'text-red-500 bg-red-50 border-red-200',
                         '钩子': 'text-purple-600 bg-purple-50 border-purple-200',
                         '泪点': 'text-blue-500 bg-blue-50 border-blue-200',
-                        '虐点': 'text-rose-500 bg-rose-50 border-rose-200',
-                        '迷之操作': 'text-orange-500 bg-orange-50 border-orange-200'
+                        '虐点': 'text-rose-500 bg-rose-50 border-rose-200'
                     };
                     
                     const hasElements = elements.some(el => {

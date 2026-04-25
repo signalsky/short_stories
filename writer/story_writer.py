@@ -2,7 +2,122 @@
 import json
 import os
 import re
+import time
 from utils import call_dashscope_api, clean_and_parse_json
+from story_scene_checker import check_and_rewrite
+
+def compress_prompt_hint(text, max_len=80):
+    if not isinstance(text, str):
+        return text
+    normalized = re.sub(r"\s+", " ", text).strip()
+    if len(normalized) <= max_len:
+        return normalized
+
+    parts = re.split(r"[；;。！？\n]", normalized)
+    selected = []
+    current_len = 0
+    for part in parts:
+        part = part.strip(" ，、；：-")
+        if not part:
+            continue
+        if selected and current_len + len(part) > max_len:
+            break
+        selected.append(part)
+        current_len += len(part)
+        if len(selected) >= 2:
+            break
+
+    compressed = "；".join(selected) if selected else normalized[:max_len]
+    return compressed[:max_len].rstrip("，、；： ")
+
+
+def build_style_guardrails():
+    return """【文风红线与质量要求】：
+- 质量优先，不要追求夸张刺激感，更不要为了像“爆款网文”而过度表演。
+- 克制不等于发虚。该炸的节点要炸进去，但只炸在真正该炸的一两下；靠刺激升级和人物反应提强度，不靠堆形容词。
+- 语言要有亲近感，像在跟读者聊天、讲八卦、说自己的事，不能端着，更不能写出“作文感”“总结感”“获奖感言感”。
+- 少写那种“看起来像小说、其实不像人话”的作者腔套句，比如“像突然断了电”“面上没露怯”“震惊里压着发慌的戒备”“空气凝固了几秒”“眼底翻涌着复杂情绪”。能改成更直接的主观反应，就改直接。
+- 每个场景只允许一个主要情绪峰值，其余情绪点到即止，要有轻重缓急和透气口。
+- 叙述以白描、动作、对话为主，句子要自然干净，允许平实，不必句句有力。
+- 比喻和意象要极少使用；整段最多点到一次，能不用就不用，禁止连续比喻、排比、堆叠形容词和成语。
+- 不要重复同类反应词和意象，例如反复写发抖、窒息、刺痛、发紧、酸涩、像什么一样。
+- 大纲里的“情绪点/爽点/虐点/钩子”只是结构提示，不是可直接照抄进正文的文案；请转化成具体事件。
+- 如果一个动作、对话已经足够成立，就不要再追加解释性心理描写；宁可少写一句，也不要把情绪写满。
+- 第一人称必须像活人在讲自己的事，允许自然的吐槽、自嘲和小心思，不要写成冷硬悬疑片旁白。
+- 女主不能只是“受害”和“解释”，她要有招人偏爱的生命力。可以有心机、有盘算、有反击、有小得意，也可以柔软、可爱、讨喜，但不能木、苦、寡淡。
+- 要有网文梗感和阅读趣味，允许一点俏皮、损人、内心吐槽、恋爱拉扯，不要把都市狗血文写得过于一本正经。
+- 节奏要顺口，长短句穿插，避免连续很多“短句+重细节+重音效”的分镜式写法。
+- 关系推进优先于镜头调度，重点写人和人的互动，不要沉迷门把手、材质、声响、冷光、骨节这类装饰性特写。
+- 除非细纲明确要求，否则不要擅自发明关键证据、侦探式工具或专业术语，例如录音、快递单、检测术语、取证机关等。
+- 论坛评论、群聊和日常对白要像真人，会有网感、情绪和身份差异，不要都写成同一种冷冰冰的腔调。
+- 关键节点优先写成“刺激落下 -> 我立刻有反应 -> 我说话/动作/决定 -> 关系或风险发生变化”，不要只停在“我很震惊”“我心里很乱”。
+- 如果当前剧情有爱情线，要写出恋爱甜度、拉扯感和偏爱感；如果是男主背叛或追妻题材，要让后悔感落在“女主值得被爱、失去她很痛”上，而不是只会空喊后悔。"""
+
+
+def trim_reference_excerpt(text, max_len=1200):
+    if not isinstance(text, str):
+        return ""
+    normalized = re.sub(r"\n{3,}", "\n\n", text).strip()
+    if len(normalized) <= max_len:
+        return normalized
+    return normalized[:max_len].rstrip() + "\n……"
+
+
+def build_elements_instruction(scene_data):
+    if not isinstance(scene_data, dict):
+        return ""
+
+    compact_items = []
+    for el_name in ["爽点", "钩子", "泪点", "虐点"]:
+        el_val = scene_data.get(el_name)
+        if isinstance(el_val, list):
+            first_valid = next((item for item in el_val if item and item != "无"), "")
+        else:
+            first_valid = el_val if isinstance(el_val, str) else ""
+
+        if first_valid and first_valid not in ("无", "[]"):
+            compact_items.append(f"- {el_name}：{compress_prompt_hint(first_valid, max_len=42)}")
+
+    if not compact_items:
+        return ""
+
+    compact_items = compact_items[:3]
+    compact_text = "\n   ".join(compact_items)
+    return (
+        "12. 【本场景看点倾向】\n"
+        "   以下只是幕后提醒，帮助你判断这段更该突出什么。不要把这些提示直接翻译成旁白、总结句或文案腔，通常抓住 1 个主打点即可，其余轻触即止：\n"
+        f"   {compact_text}\n"
+    )
+
+
+def build_emotion_progress_instruction(scene_data, scene_emotion):
+    progress = []
+    if isinstance(scene_data, dict):
+        raw_progress = scene_data.get("情绪推进")
+        if isinstance(raw_progress, list):
+            progress = [compress_prompt_hint(item, max_len=34) for item in raw_progress if item]
+
+    if progress:
+        progress_text = "\n   ".join([f"- {item}" for item in progress[:4]])
+        return (
+            "13. 【本场景情绪推进台阶】\n"
+            "   请尽量按顺序把这些台阶写出来，让情绪通过事件一级级顶上去，而不是直接口头宣布人物很崩溃、很心动、很痛：\n"
+            f"   {progress_text}\n"
+        )
+
+    fallback_steps = [
+        f"- 先让刺激真正落到我身上：{compress_prompt_hint(scene_emotion, max_len=34)}",
+        "- 紧接着给出我的第一反应，优先用动作、卡壳、嘴硬、试探、失手或打断",
+        "- 然后让我做出一句话、一个动作或一个决定，把关系往前推",
+        "- 结尾留一个新风险、新误会、新期待或新拉扯，不要平着收",
+    ]
+    fallback_text = "\n   ".join(fallback_steps)
+    return (
+        "13. 【本场景情绪推进台阶】\n"
+        "   如果细纲没有单列步骤，也要至少补齐下面这条反应链：\n"
+        f"   {fallback_text}\n"
+    )
+
 
 def write_story(json_path, target_scene_index=None, context_level=2, user_instruction=""):
     print(f"Loading input JSON: {json_path}")
@@ -215,11 +330,16 @@ def write_story(json_path, target_scene_index=None, context_level=2, user_instru
         # 处理旧版本 JSON（只有数字）和新版本 JSON（字典包含目标字数和细纲）的兼容
         target_words = 0
         scene_outline = "（请根据故事线自行发挥该场景的具体剧情）"
+        scene_rewrite_hint = ""
+        reference_excerpt = ""
         
         if isinstance(scene_data, dict):
             target_words = scene_data.get("目标字数", 0)
-            # 优先使用第一步重构后的“防抄袭细纲”，如果没有则回退到原细纲
-            scene_outline = rewritten_outlines.get(scene_name, scene_data.get("剧情细纲", scene_outline))
+            scene_outline = scene_data.get("剧情细纲", scene_outline)
+            scene_rewrite_hint = rewritten_outlines.get(scene_name, "")
+            if scene_rewrite_hint == scene_outline:
+                scene_rewrite_hint = ""
+            reference_excerpt = trim_reference_excerpt(scene_data.get("参考原文", ""))
         else:
             target_words = int(scene_data)
             
@@ -266,7 +386,7 @@ def write_story(json_path, target_scene_index=None, context_level=2, user_instru
         # 构建当前段落的写作 prompt
         intro_instruction = ""
         if i == 0:
-            intro_instruction = "这是小说的开篇，请开局直接用精炼的语言交代核心背景、人物身份和冲突，比如“我叫XXX，今天是我闪婚的第十天，是第一次见婆婆xxx”，或者通过几句激烈的对话直接交代人物关系，绝不拖泥带水！"
+            intro_instruction = "这是小说的开篇，请尽快交代核心背景、人物关系和眼前冲突。可以从一句自然的自述或一段带信息量的对话切入，但不要喊口号，不要故作抓马。"
         else:
             intro_instruction = "请紧接前文剧情自然往下写，绝对不要再次重复自我介绍（如“我叫XXX”）或重新交代背景！"
             
@@ -275,37 +395,30 @@ def write_story(json_path, target_scene_index=None, context_level=2, user_instru
         if user_instruction:
             user_instruction_block = f"\n【用户特别修改要求（优先级最高！）】：\n{user_instruction}\n"
 
-        # 提取当前场景的四大要素（爽点、钩子、泪点、虐点、迷之操作）
-        elements_instruction = ""
-        if isinstance(scene_data, dict):
-            elements_list = []
-            missing_elements = []
-            for el_name in ["爽点", "钩子", "泪点", "虐点", "迷之操作"]:
-                el_val = scene_data.get(el_name)
-                is_missing = True
-                if el_val and el_val != "无" and el_val != "[]":
-                    # 兼容字符串或列表格式
-                    if isinstance(el_val, list):
-                        if len(el_val) > 0 and el_val[0] and el_val[0] != "无":
-                            elements_list.append(f"- 【{el_name}】：\n  " + "\n  ".join([f"* {v}" for v in el_val]))
-                            is_missing = False
-                    elif isinstance(el_val, str):
-                        elements_list.append(f"- 【{el_name}】：{el_val}")
-                        is_missing = False
-                
-                if is_missing:
-                    missing_elements.append(el_name)
-                
-            elements_instruction = "9. 【核心看点与张力设计（极其重要，但必须克制）】：\n"
-            if elements_list:
-                elements_instruction += "   🚨🚨🚨【强制要求】：以下要素是当前场景的核心！你必须通过【具体的冲突、人物动作和对话】将它们**自然且隐蔽**地融入剧情中。**绝不能生硬地贴标签，坚决抵制堆砌华丽的形容词或副词。不能为了体现情绪而写出夸张、歇斯底里、用力过猛的台词或动作（例如“瞳孔地震”、“疯狂咆哮”、“撕心裂肺”等）**。情绪应该是克制而细腻的，要让读者在阅读事件的发展时自己体会到张力。如果遗漏任何一个要素，本次写作将被判定为严重失败！请务必重点刻画：\n   " + "\n   ".join(elements_list) + "\n"
-            
-            # 温和地建议大模型补充缺失的要素，不强制
-            if missing_elements:
-                elements_instruction += f"   （建议）：当前场景原剧情缺乏以下要素：【{'、'.join(missing_elements)}】。如果在不破坏剧情合理性的前提下，你可以发挥创造力，自然地为其补充一些设定（例如顺手埋个悬念钩子、或制造一点爽点/泪点/虐点），让剧情更好看。但不强制，顺其自然即可。\n"
+        elements_instruction = build_elements_instruction(scene_data)
+        emotion_progress_instruction = build_emotion_progress_instruction(scene_data, scene_emotion)
 
-        write_prompt = f'''你正在创作一篇爆款短篇小说，现在需要撰写其中的一个场景片段。
-你的写作核心是【用事件体现情绪，行文必须克制内敛】。必须以事件描写和动作描写为主，极少使用纯心理描写。让情绪通过具体的事件冲突、人物的动作和神态自然流露出来，**坚决抵制华丽辞藻的堆砌、滥用形容词和成语。拒绝歇斯底里、大吼大叫等用力过猛的网文套路表达**。事件服务于情绪，而情绪的张力在于留白。
+        condensed_scene_emotion = compress_prompt_hint(scene_emotion, max_len=90)
+        style_guardrails = build_style_guardrails()
+        write_prompt = f'''你正在创作一篇短篇小说，现在需要撰写其中的一个场景片段。
+你的任务不是写“用力很猛的网文”，而是写一个可读性高、情绪准确、语言干净的小说场景。
+写作核心是【用事件体现情绪，行文克制，语言不堆砌】。必须以事件描写、动作描写和有效对话为主，少写解释型心理描写。情绪要藏在事件推进里，而不是靠密集修辞去顶。
+
+{style_guardrails}
+
+【优先学习的成稿优点】：
+- 先追求“好读、顺口、能一口气看下去”，再追求所谓高级感。
+- 女主内心要聪明、有反应、有人味，能自然带出一点吐槽感和判断，不要一直绷着。
+- 语言要亲近，像在跟读者聊天，不要像写作文、写总结、写命题范文。
+- 女主要有让人想偏爱的点。可以精明，可以会拿捏，可以嘴甜心黑一点，也可以明媚可爱，但总之不能寡、钝、苦到底。
+- 要有网文梗感和轻微的俏皮，不要过于正经；能用一句自然吐槽写活的地方，就不要上价值。
+- 优先写“我脑子里会怎么冒出这句话”，而不是“作者觉得这句很像小说”。多用直接判断句、短吐槽、小念头，少用抽象总结句。
+- 对话要像都市言情里的真人交流，人物之间有试探、有火花、有生活感，不是人人都阴沉克制。
+- 论坛、群聊内容要有真实网友的杂音、八卦感和区分度，能推动阅读趣味。
+- 每一小段都要推动信息、关系或悬念中的至少一项，避免只靠气氛和特写拖行文。
+- 关键位不要温吞。该慌时要有一秒失手，该甜时要有一下心动，该堵时要有一句怼回去；强度来自反应够快、动作够准。
+- 可以写得通俗，但不能写得油腻；可以写得紧张，但不要写成刑侦、惊悚或文艺片腔调。
+- 如果当前场景含恋爱互动，要让甜度可感，写出被偏爱、被哄、被在意的细节；如果是背叛/追妻路数，要让女主的好和稀缺被看见，让“失去她”这件事本身有痛感。
 
 【全局公共设定（不可偏离）】：
 {public_context}
@@ -316,31 +429,73 @@ def write_story(json_path, target_scene_index=None, context_level=2, user_instru
 ------------------------
 【本次写作任务要求】：
 1. 必须使用【第一人称（“我”）】视角进行创作，代入女主的视角！
-2. 绝对禁止任何写景和环境渲染（如阳光、空气、微风等废话）！
+2. 不要空写景和无效氛围渲染；环境只在推动动作、关系或情绪时顺手带一句即可。
 3. {intro_instruction}
 4. 本次需要撰写的场景是：【{scene_name}】
-5. 【核心剧情细纲（你必须按照这个细纲来推进事件）】：{scene_outline}
-6. 本次场景必须体现的核心情绪是：【{scene_emotion}】（必须将情绪融入到具体的事件、对话和动作中，不要大段的内心独白）
-7. 目标字数要求：请严格控制在【{target_words}字】左右！不要太短，必须通过人物动作、对话和事件细节把字数拉满！
-8. 人物称呼要求：请根据第一人称视角，在适当的地方使用更自然、符合身份的称呼（如“婆婆”、“老公”、“我妈”等），**不要总是生硬地直呼其名**。但是绝对不要出现“女主”、“男主”这种大纲代称，称呼女主自己时用“我”。
+5. 【本场景原始剧情骨架（这是你必须完成的事件顺序）】：{scene_outline}
+6. 【本场景结构微调建议（只吸收有用的一两处，不要被它牵着跑）】：{scene_rewrite_hint if scene_rewrite_hint else "（无）"}
+7. 【本场景参考原文（只学习语气、节奏、吐槽感、对话感和评论区写法，严禁照抄句子）】：
+{reference_excerpt if reference_excerpt else "（无参考原文，按全局要求写）"}
+8. 本次场景必须体现的核心情绪是：【{condensed_scene_emotion}】。注意只保留这段最核心的情绪落点，情绪要融入具体事件、对话和动作中，不要大段解释。
+9. 目标字数要求：请控制在【{target_words}字】左右。宁可略短一点，也不要为了凑字数重复解释、反复渲染情绪、堆砌比喻或添加无效动作。
+10. 人物称呼要求：请根据第一人称视角，在适当的地方使用更自然、符合身份的称呼（如“婆婆”、“老公”、“我妈”等），**不要总是生硬地直呼其名**。但是绝对不要出现“女主”、“男主”这种大纲代称，称呼女主自己时用“我”。
+11. 不要把普通家庭伦理冲突写成“冷硬悬疑大片”。除非细纲明确要求，否则不要加入额外证物、专业名词、侦探动作或电影化调度。
 {elements_instruction}
+{emotion_progress_instruction}
+14. 如果“结构微调建议”和“参考原文”的自然写法发生冲突，优先保留参考原文那种顺口、有人味、像真人在讲事的路数，再吸收建议中真正有用的一小处。
+15. 少写抽象情绪总结和作者腔套话。比起“她目光复杂、空气凝固、我没露怯”，更优先写“她盯着我不说话，我心里咯噔一下，但还是先笑着叫人”这种活句。
+16. 真到爆点时，不要只写“我心里一沉”“我很乱”。请把那一下失衡落在可见动作上，比如卡壳、打断、回避、嘴硬、反问、装镇定、顺手掩饰、故意试探。
 
 请直接输出小说正文内容，不要包含任何多余的开头问候、分析说明或字数统计！直接开始写正文！
 '''
         
         scene_text = None
+        write_started_at = time.perf_counter()
         for attempt in range(3):
             print(f"Attempt {attempt + 1}/3 to generate scene...")
-            scene_text = call_dashscope_api(write_prompt, system_prompt="你是一个专业的小说作家，擅长通过具体的事件和动作细节来展现情绪，极少使用纯心理描写。你深知“高级的情绪在于克制与留白”，坚决抵制堆砌华丽的形容词、成语，坚决抵制歇斯底里、大吼大叫等用力过猛的狗血网文表达。你会极度重视并严格执行剧情中设定的'泪点'、'虐点'、'爽点'、'钩子'和'迷之操作'要素，将它们自然、克制地融入情节。")
+            scene_text = call_dashscope_api(write_prompt, system_prompt="你是一个成熟的网文作者，优先追求文本质量、节奏和自然度。你的文字亲近、顺口、有聊天感，不会写成作文、总结或命题范文。你擅长用白描、动作和对话承载情绪，避免解释腔、避免华丽辞藻堆砌、避免连环比喻、避免重复意象。你知道真正有力度的情绪来自克制、停顿和留白，但克制不等于发虚，该炸的节点要能一下扎进去。你尤其讨厌那种看起来像小说、其实不像人脑内话的作者腔套句，比如“像突然断了电”“没露怯”“复杂情绪翻涌”。你会优先把句子写成主观、直接、带一点吐槽的小念头，并把强情绪落成可见反应和动作。你笔下的女主有脑子、有生命力、值得被爱，不是干瘪的受苦工具人。你会保留网文该有的梗感、甜度和拉扯感，把'泪点'、'虐点'、'爽点'和'钩子'当作结构提示，自然嵌入情节，不会把它们写成标签化文案。")
             if scene_text:
                 break
             print("Generation failed. Retrying...")
+        write_elapsed = time.perf_counter() - write_started_at
 
         if scene_text:
             # 清理可能的 markdown 标记
             scene_text = re.sub(r'```[a-zA-Z]*\n', '', scene_text)
             scene_text = re.sub(r'```', '', scene_text)
             scene_text = scene_text.strip()
+            check_started_at = time.perf_counter()
+            scene_text, review_record = check_and_rewrite(
+                scene_text=scene_text,
+                scene_name=scene_name,
+                target_words=target_words,
+                scene_outline=scene_outline,
+                scene_emotion=scene_emotion,
+                scene_data=scene_data,
+                public_context=public_context,
+                context_paragraphs=context_paragraphs,
+                user_instruction=user_instruction,
+                reference_excerpt=reference_excerpt,
+            )
+            check_elapsed = time.perf_counter() - check_started_at
+            timing = review_record.get("timing", {}) if isinstance(review_record, dict) else {}
+            quick_seconds = float(timing.get("quick_review_seconds", 0.0) or 0.0)
+            full_seconds = float(timing.get("full_review_seconds", 0.0) or 0.0)
+            rewrite_seconds = float(timing.get("rewrite_seconds", 0.0) or 0.0)
+            comparison_seconds = float(timing.get("comparison_seconds", 0.0) or 0.0)
+            rewrite_decision = review_record.get("rewrite_decision", "unknown") if isinstance(review_record, dict) else "unknown"
+            selected_source = review_record.get("selected_source", "unknown") if isinstance(review_record, dict) else "unknown"
+            print(
+                "Timing -> "
+                f"write: {write_elapsed:.1f}s, "
+                f"check_total: {check_elapsed:.1f}s, "
+                f"quick_check: {quick_seconds:.1f}s, "
+                f"full_check: {full_seconds:.1f}s, "
+                f"rewrite: {rewrite_seconds:.1f}s, "
+                f"compare: {comparison_seconds:.1f}s, "
+                f"decision: {rewrite_decision}, "
+                f"source: {selected_source}"
+            )
             
             # 处理已有段落列表的长度，确保能够正确插入/替换当前场景
             if len(generated_paragraphs) > i:
@@ -423,7 +578,7 @@ if __name__ == "__main__":
     
     # 获取默认路径
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    default_json_path = os.path.join(current_dir, "大纲", "婆婆发帖寻亲，闪婚老公竟非亲弟.json")
+    default_json_path = os.path.join(current_dir, "大纲", "《DNA骗局：总裁的契约娇妻》.json")
     
     parser = argparse.ArgumentParser(description="Novel Writer")
     parser.add_argument("json_path", nargs="?", default=default_json_path, help="Path to the input JSON file")
