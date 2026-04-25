@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>小说导出 - 灼见短篇</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: #f8fafc;
+        }
+
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+
+        .toast {
+            position: fixed;
+            top: 24px;
+            right: 24px;
+            transform: translateX(150%);
+            transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+            z-index: 50;
+        }
+        .toast.show {
+            transform: translateX(0);
+        }
+
+        .loader {
+            border-top-color: #6366f1;
+            -webkit-animation: spinner 1.5s linear infinite;
+            animation: spinner 1.5s linear infinite;
+        }
+        @keyframes spinner {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .export-field {
+            transition: all 0.2s;
+        }
+        .export-field.editing {
+            border-color: #6366f1;
+            background-color: #fff;
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+        }
+        .export-field.readonly {
+            background-color: #f8fafc;
+            border-color: transparent;
+            resize: none;
+        }
+    </style>
+</head>
+<body class="text-slate-800 antialiased h-screen flex overflow-hidden">
+    <aside class="w-72 bg-white border-r border-slate-200 flex flex-col h-full flex-shrink-0 z-10 shadow-sm">
+        <div class="p-4 border-b border-slate-100">
+            <button id="btnNewExport" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2.5 rounded-xl font-medium text-sm shadow-sm hover:shadow transition-all flex items-center justify-center gap-2 transform active:scale-[0.98]">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                新建小说导出
+            </button>
+        </div>
+
+        <div class="p-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">
+            导出小说
+        </div>
+
+        <div id="exportList" class="flex-1 overflow-y-auto p-2 space-y-1 no-scrollbar">
+            <div class="text-center py-4 text-slate-400 text-sm italic">加载中...</div>
+        </div>
+    </aside>
+
+    <main class="flex-1 flex flex-col h-full relative bg-slate-50">
+        <header class="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-6 flex-shrink-0">
+            <h2 id="mainTitle" class="text-lg font-bold text-slate-800 tracking-tight">请选择或新建导出任务</h2>
+            <div id="toolbar" class="hidden items-center gap-3">
+                <a id="btnDownload" href="#" target="_blank" class="bg-green-500 hover:bg-green-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium shadow-sm transition-colors flex items-center gap-1">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 16V4m0 12l-4-4m4 4l4-4M4 20h16"></path></svg>
+                    下载文件
+                </a>
+                <button id="btnEdit" class="text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+                    编辑内容
+                </button>
+                <button id="btnSave" class="hidden bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-1.5 rounded-lg text-sm font-medium shadow-sm transition-colors flex items-center gap-1">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                    保存修改
+                </button>
+            </div>
+        </header>
+
+        <div class="flex-1 overflow-y-auto p-8 relative">
+            <div id="viewCreate" class="max-w-2xl mx-auto hidden">
+                <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-8">
+                    <h3 class="text-xl font-bold text-slate-800 mb-2">新建小说导出</h3>
+                    <p class="text-slate-500 text-sm mb-6">从 `重写` 目录中选择一个进度 JSON，整理为正式导出稿并写入 `writer/导出` 文件夹。</p>
+
+                    <div class="bg-indigo-50 border border-indigo-100 rounded-xl p-4 mb-8">
+                        <h4 class="text-sm font-bold text-indigo-800 mb-2 flex items-center gap-1">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                            导出说明
+                        </h4>
+                        <ul class="text-sm text-indigo-700 space-y-1.5 list-disc list-inside ml-2">
+                            <li>导出标题使用重写后的标题，也就是 `_进度.json` 去掉后缀后的文件名。</li>
+                            <li>引子会优先读取源大纲中的 `引子/楔子`，并调用大模型整理成导出版开头。</li>
+                            <li>正文从 `generated_paragraphs` 合并，自动控制块长，方便后续阅读和人工微调。</li>
+                        </ul>
+                    </div>
+
+                    <form id="exportForm" class="space-y-6">
+                        <div class="space-y-2">
+                            <label class="block text-sm font-semibold text-slate-700" for="progressFile">选择重写进度</label>
+                            <div class="relative">
+                                <select id="progressFile" required class="w-full pl-4 pr-10 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-slate-800 appearance-none">
+                                    <option value="" disabled selected>加载中...</option>
+                                </select>
+                                <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-slate-500">
+                                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="space-y-2">
+                            <label class="block text-sm font-semibold text-slate-700" for="prologueWords">引子目标字数</label>
+                            <input id="prologueWords" type="number" min="80" max="400" value="180" class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-slate-800">
+                            <p class="text-xs text-slate-500">默认控制在 180 字左右，可按导出风格自行调整。</p>
+                        </div>
+
+                        <div class="flex items-center justify-end pt-4">
+                            <button type="submit" id="btnSubmitExport" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-xl font-medium text-sm shadow-sm transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v8m0 0l-3-3m3 3l3-3M5 20h14"></path></svg>
+                                开始导出
+                            </button>
+                        </div>
+                    </form>
+
+                    <div id="exportingStatus" class="hidden mt-8 p-6 bg-indigo-50 rounded-xl border border-indigo-100 text-center">
+                        <div class="loader ease-linear rounded-full border-4 border-t-4 border-indigo-200 h-10 w-10 mx-auto mb-4"></div>
+                        <h4 class="text-indigo-800 font-medium">正在导出小说...</h4>
+                        <p class="text-indigo-600 text-xs mt-2 leading-relaxed">导出完成后会自动进入阅读编辑页，并显示完整内容。</p>
+                    </div>
+                </div>
+            </div>
+
+            <div id="viewEditor" class="max-w-5xl mx-auto hidden pb-20">
+                <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                    <div class="p-6 md:p-8 space-y-6">
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div class="rounded-xl border border-slate-200 p-4 bg-slate-50">
+                                <div class="text-xs font-semibold text-slate-500 mb-1">导出标题</div>
+                                <div id="exportTitleMeta" class="text-base font-bold text-slate-800 break-all"></div>
+                            </div>
+                            <div class="rounded-xl border border-slate-200 p-4 bg-slate-50">
+                                <div class="text-xs font-semibold text-slate-500 mb-1">导出路径</div>
+                                <div id="exportPathMeta" class="text-sm text-slate-700 break-all leading-relaxed"></div>
+                            </div>
+                            <div class="rounded-xl border border-slate-200 p-4 bg-slate-50">
+                                <div class="text-xs font-semibold text-slate-500 mb-1">文件字数</div>
+                                <div id="exportLengthMeta" class="text-base font-bold text-slate-800">0</div>
+                            </div>
+                        </div>
+
+                        <div class="space-y-2">
+                            <label class="block text-sm font-semibold text-slate-700" for="exportContent">导出正文</label>
+                            <textarea id="exportContent" rows="28" class="w-full px-4 py-4 rounded-xl text-sm text-slate-800 export-field readonly outline-none leading-relaxed border border-transparent resize-y" readonly></textarea>
+                            <p class="text-xs text-slate-500">这里展示完整导出内容，可直接编辑并保存。下载按钮会下载当前文件。</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="viewEmpty" class="h-full flex flex-col items-center justify-center text-center">
+                <div class="w-24 h-24 bg-slate-100 rounded-full flex items-center justify-center mb-6">
+                    <svg class="w-12 h-12 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 16V4m0 12l-4-4m4 4l4-4M4 20h16"></path></svg>
+                </div>
+                <h3 class="text-xl font-bold text-slate-700">欢迎使用小说导出功能</h3>
+                <p class="mt-2 text-slate-500 max-w-md">左侧可查看已导出的小说，或点击“新建小说导出”从重写进度生成正式导出稿。</p>
+            </div>
+        </div>
+    </main>
+
+    <div id="toast" class="toast bg-white border border-slate-200 shadow-lg rounded-xl p-4 flex items-start gap-3 w-80">
+        <div id="toastIconWrapper" class="flex-shrink-0 mt-0.5 rounded-full p-1 bg-green-100 text-green-600">
+            <svg id="toastIcon" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+        </div>
+        <div class="flex-1">
+            <h4 id="toastTitle" class="text-sm font-semibold text-slate-800">操作成功</h4>
+            <p id="toastMessage" class="text-xs text-slate-500 mt-1 leading-relaxed">...</p>
+        </div>
+    </div>
+
+    <script>
+        const exportList = document.getElementById('exportList');
+        const viewCreate = document.getElementById('viewCreate');
+        const viewEditor = document.getElementById('viewEditor');
+        const viewEmpty = document.getElementById('viewEmpty');
+        const mainTitle = document.getElementById('mainTitle');
+        const toolbar = document.getElementById('toolbar');
+
+        const btnNewExport = document.getElementById('btnNewExport');
+        const progressFile = document.getElementById('progressFile');
+        const prologueWords = document.getElementById('prologueWords');
+        const exportForm = document.getElementById('exportForm');
+        const btnSubmitExport = document.getElementById('btnSubmitExport');
+        const exportingStatus = document.getElementById('exportingStatus');
+
+        const btnDownload = document.getElementById('btnDownload');
+        const btnEdit = document.getElementById('btnEdit');
+        const btnSave = document.getElementById('btnSave');
+        const exportContent = document.getElementById('exportContent');
+
+        let currentExportFilename = null;
+        let currentExportData = null;
+        let isEditing = false;
+        let toastTimeout;
+
+        function showToast(title, message, isError = false) {
+            const toast = document.getElementById('toast');
+            const toastTitle = document.getElementById('toastTitle');
+            const toastMessage = document.getElementById('toastMessage');
+            const toastIconWrapper = document.getElementById('toastIconWrapper');
+            const toastIcon = document.getElementById('toastIcon');
+
+            toastTitle.textContent = title;
+            toastMessage.textContent = message;
+
+            if (isError) {
+                toastIconWrapper.className = 'flex-shrink-0 mt-0.5 rounded-full p-1 bg-red-100 text-red-600';
+                toastIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>';
+            } else {
+                toastIconWrapper.className = 'flex-shrink-0 mt-0.5 rounded-full p-1 bg-green-100 text-green-600';
+                toastIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>';
+            }
+
+            clearTimeout(toastTimeout);
+            toast.classList.add('show');
+            toastTimeout = setTimeout(() => toast.classList.remove('show'), 3500);
+        }
+
+        function switchView(view) {
+            viewCreate.classList.add('hidden');
+            viewEditor.classList.add('hidden');
+            viewEmpty.classList.add('hidden');
+            toolbar.classList.add('hidden');
+
+            document.querySelectorAll('#exportList button').forEach(b => {
+                b.classList.remove('bg-indigo-50', 'text-indigo-700', 'border-indigo-500');
+                b.classList.add('text-slate-600', 'border-transparent');
+            });
+
+            if (view === 'create') {
+                viewCreate.classList.remove('hidden');
+                mainTitle.textContent = '新建小说导出';
+                loadProgressOptions();
+            } else if (view === 'editor') {
+                viewEditor.classList.remove('hidden');
+                toolbar.classList.remove('hidden');
+                toolbar.classList.add('flex');
+            } else {
+                viewEmpty.classList.remove('hidden');
+                mainTitle.textContent = '请选择或新建导出任务';
+            }
+        }
+
+        function highlightSidebarItem(btn) {
+            document.querySelectorAll('#exportList button').forEach(b => {
+                b.classList.remove('bg-indigo-50', 'text-indigo-700', 'border-indigo-500');
+                b.classList.add('text-slate-600', 'border-transparent');
+            });
+            btn.classList.add('bg-indigo-50', 'text-indigo-700', 'border-indigo-500');
+            btn.classList.remove('text-slate-600', 'border-transparent');
+        }
+
+        function renderEditor(data) {
+            currentExportData = data;
+            mainTitle.textContent = data.title || '导出小说';
+            document.getElementById('exportTitleMeta').textContent = data.title || '';
+            document.getElementById('exportPathMeta').textContent = data.path || '';
+            document.getElementById('exportLengthMeta').textContent = `${(data.content || '').length} 字`;
+            exportContent.value = data.content || '';
+            btnDownload.href = `/api/exports/${encodeURIComponent(currentExportFilename)}/download`;
+        }
+
+        function setEditMode(edit) {
+            isEditing = edit;
+            if (edit) {
+                btnEdit.classList.add('hidden');
+                btnSave.classList.remove('hidden');
+                exportContent.readOnly = false;
+                exportContent.classList.remove('readonly');
+                exportContent.classList.add('editing');
+                exportContent.focus();
+            } else {
+                btnEdit.classList.remove('hidden');
+                btnSave.classList.add('hidden');
+                exportContent.readOnly = true;
+                exportContent.classList.add('readonly');
+                exportContent.classList.remove('editing');
+            }
+        }
+
+        async function loadProgressOptions() {
+            try {
+                const res = await fetch('/api/rewrites');
+                const files = await res.json();
+
+                progressFile.innerHTML = '<option value="" disabled selected>-- 请选择一个重写进度文件 --</option>';
+                if (!Array.isArray(files) || files.length === 0) {
+                    progressFile.innerHTML = '<option value="" disabled selected>暂无可导出的进度文件</option>';
+                    return;
+                }
+
+                files.forEach(file => {
+                    const option = document.createElement('option');
+                    option.value = file;
+                    option.textContent = file.replace('_进度.json', '');
+                    progressFile.appendChild(option);
+                });
+            } catch (err) {
+                progressFile.innerHTML = '<option value="" disabled selected>加载失败，请刷新重试</option>';
+                showToast('加载失败', '无法读取重写进度列表', true);
+            }
+        }
+
+        async function fetchExports() {
+            try {
+                const res = await fetch('/api/exports');
+                const files = await res.json();
+
+                exportList.innerHTML = '';
+                if (!Array.isArray(files) || files.length === 0) {
+                    exportList.innerHTML = '<div class="text-center py-4 text-slate-400 text-sm">暂无导出文件</div>';
+                    return;
+                }
+
+                files.forEach(file => {
+                    const itemDiv = document.createElement('div');
+                    itemDiv.className = 'group relative flex items-center mb-1';
+
+                    const btn = document.createElement('button');
+                    btn.className = 'w-full text-left px-3 py-2.5 pr-8 rounded-lg text-sm font-medium border-l-2 border-transparent text-slate-600 hover:bg-slate-50 transition-all truncate';
+                    btn.textContent = file.replace('.txt', '');
+                    btn.dataset.filename = file;
+                    btn.title = file.replace('.txt', '');
+                    btn.onclick = () => loadExport(file, btn);
+
+                    const delBtn = document.createElement('button');
+                    delBtn.className = 'absolute right-2 p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded opacity-0 group-hover:opacity-100 transition-all';
+                    delBtn.title = '删除文件';
+                    delBtn.innerHTML = '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>';
+                    delBtn.onclick = (e) => {
+                        e.stopPropagation();
+                        deleteExport(file);
+                    };
+
+                    itemDiv.appendChild(btn);
+                    itemDiv.appendChild(delBtn);
+                    exportList.appendChild(itemDiv);
+                });
+
+                if (currentExportFilename) {
+                    const activeBtn = exportList.querySelector(`button[data-filename="${currentExportFilename}"]`);
+                    if (activeBtn) {
+                        highlightSidebarItem(activeBtn);
+                    }
+                }
+            } catch (err) {
+                exportList.innerHTML = '<div class="text-center py-4 text-red-400 text-sm">加载失败</div>';
+            }
+        }
+
+        async function deleteExport(filename) {
+            if (!confirm(`确定要删除导出文件 "${filename}" 吗？此操作不可恢复。`)) return;
+
+            try {
+                const res = await fetch(`/api/exports/${encodeURIComponent(filename)}`, {
+                    method: 'DELETE'
+                });
+                const result = await res.json();
+                if (!res.ok) {
+                    throw new Error(result.error || '删除失败');
+                }
+
+                if (currentExportFilename === filename) {
+                    currentExportFilename = null;
+                    currentExportData = null;
+                    setEditMode(false);
+                    switchView('empty');
+                }
+
+                await fetchExports();
+                showToast('删除成功', '导出文件已删除');
+            } catch (err) {
+                showToast('删除失败', err.message || '无法删除导出文件', true);
+            }
+        }
+
+        async function loadExport(filename, btnElement) {
+            try {
+                const res = await fetch(`/api/exports/${encodeURIComponent(filename)}`);
+                const data = await res.json();
+                if (!res.ok) {
+                    throw new Error(data.error || '读取失败');
+                }
+
+                currentExportFilename = filename;
+                renderEditor(data);
+                setEditMode(false);
+                switchView('editor');
+                highlightSidebarItem(btnElement);
+            } catch (err) {
+                showToast('加载失败', err.message || '无法读取导出文件', true);
+            }
+        }
+
+        async function saveExport() {
+            if (!currentExportFilename) return;
+
+            try {
+                btnSave.disabled = true;
+                btnSave.innerHTML = '<svg class="animate-spin w-4 h-4 mr-1" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> 保存中...';
+
+                const res = await fetch(`/api/exports/${encodeURIComponent(currentExportFilename)}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        content: exportContent.value
+                    })
+                });
+                const result = await res.json();
+                if (!res.ok) {
+                    throw new Error(result.error || '保存失败');
+                }
+
+                currentExportData.content = exportContent.value;
+                renderEditor(currentExportData);
+                setEditMode(false);
+                showToast('保存成功', '导出小说内容已更新');
+            } catch (err) {
+                showToast('保存失败', err.message || '无法保存导出文件', true);
+            } finally {
+                btnSave.disabled = false;
+                btnSave.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> 保存修改';
+            }
+        }
+
+        btnNewExport.addEventListener('click', () => switchView('create'));
+        btnEdit.addEventListener('click', () => setEditMode(true));
+        btnSave.addEventListener('click', saveExport);
+
+        exportForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            if (!progressFile.value) {
+                showToast('请选择文件', '请先选择一个重写进度文件', true);
+                return;
+            }
+
+            btnSubmitExport.disabled = true;
+            exportingStatus.classList.remove('hidden');
+
+            try {
+                const res = await fetch('/api/export_novel', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        filename: progressFile.value,
+                        prologue_words: parseInt(prologueWords.value || '180', 10)
+                    })
+                });
+                const result = await res.json();
+                if (!res.ok) {
+                    throw new Error(result.error || '导出失败');
+                }
+
+                await fetchExports();
+                const targetFilename = result.output_filename;
+                const btn = exportList.querySelector(`button[data-filename="${targetFilename}"]`);
+                if (btn) {
+                    await loadExport(targetFilename, btn);
+                }
+                showToast('导出成功', '导出文件已生成，可直接预览、编辑或下载');
+            } catch (err) {
+                showToast('导出失败', err.message || '发生未知错误', true);
+            } finally {
+                btnSubmitExport.disabled = false;
+                exportingStatus.classList.add('hidden');
+            }
+        });
+
+        fetchExports();
+        switchView('empty');
+    </script>
+</body>
+</html>

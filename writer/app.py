@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-from flask import Flask, request, jsonify, render_template, redirect
+from flask import Flask, request, jsonify, render_template, redirect, send_from_directory
 from flask_cors import CORS
 import json
 import os
 import subprocess
+from story_exporter import export_story
 
 app = Flask(__name__)
 CORS(app)  # 允许跨域请求
@@ -18,10 +19,12 @@ WRITER_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(WRITER_DIR, 'config.json')
 OUTLINE_DIR = os.path.join(WRITER_DIR, '大纲')
 REWRITE_DIR = os.path.join(WRITER_DIR, '重写')
+EXPORT_DIR = os.path.join(WRITER_DIR, '导出')
 
 # 确保必要的目录存在
 os.makedirs(OUTLINE_DIR, exist_ok=True)
 os.makedirs(REWRITE_DIR, exist_ok=True)
+os.makedirs(EXPORT_DIR, exist_ok=True)
 
 # 记录正在运行的生成任务进程 { outline_filename: subprocess.Popen }
 active_generate_processes = {}
@@ -34,7 +37,7 @@ def index():
 @app.route('/workspace/<tab>')
 def workspace(tab):
     """工作台路由，支持 restful 的标签页"""
-    if tab not in ['extract', 'write', 'config']:
+    if tab not in ['extract', 'write', 'export', 'config']:
         tab = 'extract'
     return render_template('index.html', active_tab=tab)
 
@@ -47,6 +50,11 @@ def extract_page():
 def write_page():
     """提供生成小说页面"""
     return render_template('write.html')
+
+@app.route('/export')
+def export_page():
+    """提供小说导出页面"""
+    return render_template('export.html')
 
 @app.route('/api/config', methods=['GET'])
 def get_config():
@@ -395,6 +403,121 @@ def rewrite_single_scene():
             
         return jsonify({"message": "Scene rewritten successfully", "logs": stdout})
         
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/export_novel', methods=['POST'])
+def export_novel():
+    """根据重写进度文件导出整理后的小说 TXT"""
+    try:
+        data = request.json or {}
+        filename = data.get('filename')
+        prologue_words = int(data.get('prologue_words', 180) or 180)
+
+        if not filename:
+            return jsonify({"error": "No progress file selected"}), 400
+
+        if not filename.endswith('_进度.json'):
+            return jsonify({"error": "Invalid progress filename"}), 400
+
+        progress_path = os.path.join(REWRITE_DIR, filename)
+        if not os.path.exists(progress_path):
+            return jsonify({"error": "Progress file not found"}), 404
+
+        result = export_story(progress_path, prologue_words=max(80, prologue_words))
+        return jsonify({
+            "message": "Export completed successfully",
+            **result
+        })
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/exports', methods=['GET'])
+def list_exports():
+    """获取所有导出的小说 txt 文件列表"""
+    try:
+        files = [f for f in os.listdir(EXPORT_DIR) if f.endswith('.txt')]
+        files.sort(key=lambda x: os.path.getmtime(os.path.join(EXPORT_DIR, x)), reverse=True)
+        return jsonify(files)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/exports/<filename>', methods=['GET'])
+def get_export(filename):
+    """获取指定导出小说的内容"""
+    try:
+        if not filename.endswith('.txt'):
+            return jsonify({"error": "Invalid export filename"}), 400
+
+        filepath = os.path.join(EXPORT_DIR, filename)
+        if not os.path.exists(filepath):
+            return jsonify({"error": "File not found"}), 404
+
+        with open(filepath, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        return jsonify({
+            "filename": filename,
+            "title": filename[:-4],
+            "content": content,
+            "path": filepath
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/exports/<filename>', methods=['POST'])
+def save_export(filename):
+    """保存编辑后的导出小说内容"""
+    try:
+        if not filename.endswith('.txt'):
+            return jsonify({"error": "Invalid export filename"}), 400
+
+        filepath = os.path.join(EXPORT_DIR, filename)
+        if not os.path.exists(filepath):
+            return jsonify({"error": "File not found"}), 404
+
+        data = request.json or {}
+        content = data.get("content", "")
+        if not isinstance(content, str):
+            return jsonify({"error": "Invalid content"}), 400
+
+        with open(filepath, 'w', encoding='utf-8') as f:
+            f.write(content)
+
+        return jsonify({"message": "Success"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/exports/<filename>', methods=['DELETE'])
+def delete_export(filename):
+    """删除指定导出小说"""
+    try:
+        if not filename.endswith('.txt'):
+            return jsonify({"error": "Invalid export filename"}), 400
+
+        filepath = os.path.join(EXPORT_DIR, filename)
+        if not os.path.exists(filepath):
+            return jsonify({"error": "File not found"}), 404
+
+        os.remove(filepath)
+        return jsonify({"message": "File deleted successfully"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/exports/<filename>/download', methods=['GET'])
+def download_export(filename):
+    """下载导出小说"""
+    try:
+        if not filename.endswith('.txt'):
+            return jsonify({"error": "Invalid export filename"}), 400
+
+        filepath = os.path.join(EXPORT_DIR, filename)
+        if not os.path.exists(filepath):
+            return jsonify({"error": "File not found"}), 404
+
+        return send_from_directory(EXPORT_DIR, filename, as_attachment=True)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

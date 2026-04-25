@@ -135,7 +135,7 @@
 
                         <div class="space-y-2">
                             <label class="block text-sm font-semibold text-slate-700" for="globalInstruction">全局重写建议 (可选)</label>
-                            <textarea id="globalInstruction" rows="4" placeholder="例如：将背景改为八零年代，给女主加上能听到男主心声的读心术..." class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-slate-800 leading-relaxed resize-y"></textarea>
+                            <textarea id="globalInstruction" rows="6" placeholder="例如：将背景改为八零年代，给女主加上能听到男主心声的读心术..." class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-slate-800 leading-relaxed resize-y"></textarea>
                         </div>
 
                         <div class="flex items-center justify-end pt-4">
@@ -261,6 +261,7 @@
         const btnConfirmRewrite = document.getElementById('btnConfirmRewrite');
         const rewriteContextSelect = document.getElementById('rewriteContextSelect');
         const rewriteInstruction = document.getElementById('rewriteInstruction');
+        const globalInstruction = document.getElementById('globalInstruction');
 
         let currentFilename = null;
         let currentJsonData = null;
@@ -307,6 +308,7 @@
             if (view === 'create') {
                 viewCreate.classList.remove('hidden');
                 mainTitle.textContent = "新建小说生成";
+                globalInstruction.style.height = '';
                 loadOutlineOptions();
             } else if (view === 'editor') {
                 viewEditor.classList.remove('hidden');
@@ -508,7 +510,7 @@
             
             // 触发一次高度自适应
             setTimeout(() => {
-                document.querySelectorAll('textarea').forEach(ta => {
+                editorContainer.querySelectorAll('textarea').forEach(ta => {
                     ta.style.height = 'auto';
                     ta.style.height = (ta.scrollHeight) + 'px';
                 });
