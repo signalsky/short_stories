@@ -3,7 +3,7 @@ import argparse
 import json
 import os
 import re
-from typing import List, Tuple
+from typing import List
 
 from utils import call_dashscope_api
 
@@ -53,14 +53,16 @@ def build_prologue_prompt(raw_prologue: str, target_words: int) -> str:
 现在要把一段小说开头整理成导出版的“引子/楔子”。
 
 【目标】
-1. 保留原始戏剧冲突、悬念和钩子。
-2. 文风自然，像成熟网文正文，不要写成总结、简介或宣传文案。
-3. 只输出引子正文，不要加标题，不要加引号，不要解释。
-4. 字数尽量控制在 {target_words} 字左右，允许上下浮动 30 字。
-5. 保持第一人称叙述和阅读张力，结尾要有明确的钩子感。
-6. 不要擅自新增关键设定，不要改变人物关系和事实。
+1. 只能基于我提供的正文素材整理，不要借鉴、补写或参考任何旧大纲、旧版本引子或外部设定。
+2. 优先提炼素材里最吸睛、最有冲突、最能让人立刻想继续看的内容，把最炸的钩子尽量前置。
+3. 保留原始戏剧冲突、悬念和钩子，允许你适度重组句序和表达，但不要改动事实关系。
+4. 文风自然，像成熟网文正文，不要写成总结、简介或宣传文案。
+5. 只输出引子正文，不要加标题，不要加引号，不要解释。
+6. 字数尽量控制在 {target_words} 字左右，允许上下浮动 30 字。
+7. 保持第一人称叙述和阅读张力，开头两三句就要抓人，结尾要有明确的钩子感。
+8. 不要擅自新增关键设定，不要改变人物关系和事实。
 
-【原始引子】
+【正文素材】
 {raw_prologue}
 """
 
@@ -80,6 +82,23 @@ def rewrite_prologue(raw_prologue: str, target_words: int = DEFAULT_PROLOGUE_WOR
 
     cleaned = normalize_text_block(response)
     return cleaned or raw_prologue
+
+
+def build_prologue_source_from_progress(paragraphs: List[str], max_chars: int = 2600) -> str:
+    normalized = normalize_generated_paragraphs(paragraphs)
+    if not normalized:
+        return ""
+
+    selected = []
+    current_len = 0
+    for paragraph in normalized[:3]:
+        para_len = len(paragraph)
+        if selected and current_len + 2 + para_len > max_chars:
+            break
+        selected.append(paragraph)
+        current_len += para_len if not selected[:-1] else para_len + 2
+
+    return normalize_text_block("\n\n".join(selected))
 
 
 def split_oversized_text(text: str, max_words: int = MAX_CHUNK_WORDS) -> List[str]:
@@ -194,27 +213,8 @@ def merge_body_chunks(paragraphs: List[str]) -> List[str]:
     return chunks
 
 
-def resolve_outline_path(progress_path: str, progress_data: dict) -> str:
-    outline_dir = os.path.join(get_writer_dir(), "大纲")
-
-    outline_filename = progress_data.get("source_outline_filename")
-    if not outline_filename:
-        outline_filename = os.path.basename(progress_path).replace("_进度.json", ".json")
-
-    return os.path.join(outline_dir, outline_filename)
-
-
-def load_outline_data(progress_path: str, progress_data: dict) -> Tuple[dict, str]:
-    outline_path = resolve_outline_path(progress_path, progress_data)
-    if not os.path.exists(outline_path):
-        return {}, outline_path
-
-    with open(outline_path, "r", encoding="utf-8") as f:
-        return json.load(f), outline_path
-
-
-def build_output_path(progress_path: str, progress_data: dict, outline_data: dict) -> str:
-    del progress_data, outline_data
+def build_output_path(progress_path: str, progress_data: dict) -> str:
+    del progress_data
     output_basename = get_progress_title(progress_path)
     return os.path.join(get_export_dir(), f"{output_basename}.txt")
 
@@ -237,18 +237,17 @@ def export_story(progress_path: str, prologue_words: int = DEFAULT_PROLOGUE_WORD
     with open(progress_path, "r", encoding="utf-8") as f:
         progress_data = json.load(f)
 
-    outline_data, outline_path = load_outline_data(progress_path, progress_data)
-    raw_prologue = outline_data.get("引子/楔子", "")
+    paragraphs = progress_data.get("generated_paragraphs", [])
+    raw_prologue = build_prologue_source_from_progress(paragraphs)
     exported_prologue = rewrite_prologue(raw_prologue, target_words=prologue_words) if raw_prologue else ""
     export_title = get_progress_title(progress_path)
 
-    paragraphs = progress_data.get("generated_paragraphs", [])
     body_chunks = merge_body_chunks(paragraphs)
     if not body_chunks:
         raise ValueError("No valid generated_paragraphs found for export.")
 
     final_text = compose_export_text(exported_prologue, body_chunks)
-    output_path = build_output_path(progress_path, progress_data, outline_data)
+    output_path = build_output_path(progress_path, progress_data)
 
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(final_text)
@@ -257,7 +256,7 @@ def export_story(progress_path: str, prologue_words: int = DEFAULT_PROLOGUE_WORD
         "title": export_title,
         "output_filename": os.path.basename(output_path),
         "output_path": output_path,
-        "outline_path": outline_path,
+        "outline_path": "",
         "chunk_count": len(body_chunks),
         "chunk_lengths": [len(chunk) for chunk in body_chunks],
         "prologue_length": len(exported_prologue),

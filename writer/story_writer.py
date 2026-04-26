@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import hashlib
 import json
 import os
 import re
@@ -52,6 +53,18 @@ def build_style_guardrails():
 - 论坛评论、群聊和日常对白要像真人，会有网感、情绪和身份差异，不要都写成同一种冷冰冰的腔调。
 - 关键节点优先写成“刺激落下 -> 我立刻有反应 -> 我说话/动作/决定 -> 关系或风险发生变化”，不要只停在“我很震惊”“我心里很乱”。
 - 如果当前剧情有爱情线，要写出恋爱甜度、拉扯感和偏爱感；如果是男主背叛或追妻题材，要让后悔感落在“女主值得被爱、失去她很痛”上，而不是只会空喊后悔。"""
+
+
+def build_rewrite_cache_signature(core_characters, character_personalities, original_outlines, original_emotions, user_instruction):
+    payload = {
+        "core_characters": core_characters,
+        "character_personalities": character_personalities,
+        "original_outlines": original_outlines,
+        "original_emotions": original_emotions,
+        "user_instruction": user_instruction or "",
+    }
+    normalized = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
 def trim_reference_excerpt(text, max_len=1200):
@@ -177,35 +190,69 @@ def write_story(json_path, target_scene_index=None, context_level=2, user_instru
     elif "global_instruction" in progress_data:
         # 如果当前没有传指令，但之前保存过，则恢复
         user_instruction = progress_data["global_instruction"]
+
+    # 提取原细纲/情绪，并生成缓存签名；当大纲内容或全局修改建议变化时，必须先重构细纲再继续写
+    original_outlines = {k: v.get("剧情细纲", "") for k, v in scenes_dict.items() if isinstance(v, dict)}
+    original_emotions = emotions if isinstance(emotions, list) else []
+    current_rewrite_signature = build_rewrite_cache_signature(
+        core_characters,
+        character_personalities,
+        original_outlines,
+        original_emotions,
+        user_instruction,
+    )
     
     # 3. 第一次 LLM 调用：为角色取名，并将大纲/情绪点中的代称替换为真实姓名
     print("\n--- Step 1: Assigning real names to characters ---")
     
-    if "name_map" in progress_data and "rewritten_outlines" in progress_data and "rewritten_emotions" in progress_data:
+    cached_signature = progress_data.get("rewrite_cache_signature")
+    cache_valid = (
+        "name_map" in progress_data
+        and "rewritten_outlines" in progress_data
+        and "rewritten_emotions" in progress_data
+        and cached_signature == current_rewrite_signature
+    )
+
+    if cache_valid:
         name_map = progress_data["name_map"]
         rewritten_outlines = progress_data["rewritten_outlines"]
         rewritten_emotions = progress_data["rewritten_emotions"]
         print("Using cached names, outlines, and emotions.")
     else:
-        # 提取所有的旧细纲
-        original_outlines = {k: v.get("剧情细纲", "") for k, v in scenes_dict.items() if isinstance(v, dict)}
-        
-        # 提取原情绪点
-        original_emotions = emotions if isinstance(emotions, list) else []
+        if cached_signature and cached_signature != current_rewrite_signature:
+            print("Rewrite instruction or source outline changed. Regenerating names, outlines, and emotions before writing.")
+        elif "name_map" in progress_data or "rewritten_outlines" in progress_data or "rewritten_emotions" in progress_data:
+            print("Cached rewrite data incomplete or outdated. Regenerating before writing.")
+
+        rewrite_requirement = "如果没有【用户特别修改要求】，则只做代称替换，不要改动剧情。"
+        extra_naming_context = ""
+        if user_instruction:
+            rewrite_requirement = "请先吸收【用户特别修改要求】，按要求重构每个场景的剧情细纲和情绪点，再输出结果。"
+            extra_naming_context = f'''
+【用户特别修改要求（优先级最高）】：
+{user_instruction}
+
+请特别注意：
+- 先理解时代、地域、职业、家庭结构和悬念机制，再动笔。
+- 人名必须符合对应年代与社会背景，宁可自然朴素，也不要像近年网文主角名。
+- 重构细纲时必须保留原场景顺序与主线推进，但要把修改要求真正落到每一场戏里，而不是只换几个词。
+'''
         
         naming_prompt = f'''你是一个专业的小说作者。我有一篇小说的核心人物代称列表。
 
 【任务一：取名】
-请根据这些代称，为他们每个人取一个符合该小说类型风格的真实姓名。
+请根据这些代称，为他们每个人取一个符合小说背景、年代气质和人物阶层的真实姓名。
+名字要自然顺耳，符合中文真实命名习惯，不要过于悬浮、言情腔、偶像剧腔或近年网文感。
 核心人物列表：{json.dumps(core_characters, ensure_ascii=False)}
 
-【任务二：替换剧情细纲中的代称】
-请将以下【原剧情细纲】中出现的所有角色代称，全部替换为你刚刚为他们取好的真实姓名。
-细纲的剧情内容绝对不能有任何修改，仅仅替换名字！
+【任务二：重构剧情细纲】
+请基于以下【原剧情细纲】，输出同样场景顺序下的【重构细纲】。
+{rewrite_requirement}
+无论是否重构，都必须把代称替换成你刚刚取好的真实姓名。
 
-【任务三：替换情绪点中的代称】
-请将以下【原情绪点列表】中出现的所有角色代称，全部替换为你刚刚为他们取好的真实姓名。
-情绪点的内容绝对不能有任何修改，仅仅替换名字！
+【任务三：重构情绪点】
+请让【重构情绪点】和【重构细纲】保持一致。
+如果没有【用户特别修改要求】，只需把代称替换成真实姓名；如果有修改要求，则同步修正情绪落点、试探方式、证据链和人物关系张力。
 
 【输出要求】：
 请务必只返回一个合法的 JSON 字典，包含 "角色姓名"、"重构细纲" 和 "重构情绪点" 三个 Key。不要返回任何其他内容或 Markdown 标记，也不要加上任何前缀。你的回答必须能够直接被 json.loads 解析！
@@ -224,6 +271,8 @@ def write_story(json_path, target_scene_index=None, context_level=2, user_instru
   "重构情绪点": [
   ]
 }}
+
+{extra_naming_context}
 
 【原剧情细纲】：
 {json.dumps(original_outlines, ensure_ascii=False, indent=2)}
@@ -265,10 +314,13 @@ def write_story(json_path, target_scene_index=None, context_level=2, user_instru
         progress_data["name_map"] = name_map
         progress_data["rewritten_outlines"] = rewritten_outlines
         progress_data["rewritten_emotions"] = rewritten_emotions
+        progress_data["rewrite_cache_signature"] = current_rewrite_signature
         progress_data["generated_paragraphs"] = progress_data.get("generated_paragraphs", [])
         
         with open(output_json_path, 'w', encoding='utf-8') as f:
             json.dump(progress_data, f, ensure_ascii=False, indent=2)
+    
+    progress_data["rewrite_cache_signature"] = current_rewrite_signature
         
     # 准备公共数据字符串，用于传递给后续的每次写作请求
     public_context = f'''
@@ -330,15 +382,18 @@ def write_story(json_path, target_scene_index=None, context_level=2, user_instru
         # 处理旧版本 JSON（只有数字）和新版本 JSON（字典包含目标字数和细纲）的兼容
         target_words = 0
         scene_outline = "（请根据故事线自行发挥该场景的具体剧情）"
-        scene_rewrite_hint = ""
+        original_scene_outline = scene_outline
+        scene_outline_reference = ""
         reference_excerpt = ""
         
         if isinstance(scene_data, dict):
             target_words = scene_data.get("目标字数", 0)
-            scene_outline = scene_data.get("剧情细纲", scene_outline)
-            scene_rewrite_hint = rewritten_outlines.get(scene_name, "")
-            if scene_rewrite_hint == scene_outline:
-                scene_rewrite_hint = ""
+            original_scene_outline = scene_data.get("剧情细纲", scene_outline)
+            scene_outline = original_scene_outline
+            rewritten_scene_outline = rewritten_outlines.get(scene_name, "")
+            if rewritten_scene_outline and rewritten_scene_outline != original_scene_outline:
+                scene_outline = rewritten_scene_outline
+                scene_outline_reference = original_scene_outline
             reference_excerpt = trim_reference_excerpt(scene_data.get("参考原文", ""))
         else:
             target_words = int(scene_data)
@@ -360,15 +415,15 @@ def write_story(json_path, target_scene_index=None, context_level=2, user_instru
         # 查找该场景对应的情绪
         scene_emotion = "（自由发挥符合剧情的细腻情绪）"
         
-        # 首先尝试从新版 JSON 的场景细纲字典中直接读取情绪点
-        if isinstance(scene_data, dict) and "情绪点" in scene_data and scene_data["情绪点"]:
-            scene_emotion = scene_data["情绪点"]
-        elif rewritten_emotions:
+        # 优先使用重构后的情绪点；如果没有，再回退到原始大纲中的情绪点
+        if rewritten_emotions:
             # 如果存在重构后的情绪点（全局列表），尝试模糊查找
             for ep in rewritten_emotions:
                 if isinstance(ep, str) and (scene_name in ep or ep in scene_name):
                     scene_emotion = ep
                     break
+        elif isinstance(scene_data, dict) and "情绪点" in scene_data and scene_data["情绪点"]:
+            scene_emotion = scene_data["情绪点"]
         elif isinstance(emotions, list):
             # 兼容老格式：原始的全局列表情绪点
             for ep in emotions:
@@ -395,8 +450,9 @@ def write_story(json_path, target_scene_index=None, context_level=2, user_instru
         if user_instruction:
             user_instruction_block = f"\n【用户特别修改要求（优先级最高！）】：\n{user_instruction}\n"
 
-        elements_instruction = build_elements_instruction(scene_data)
-        emotion_progress_instruction = build_emotion_progress_instruction(scene_data, scene_emotion)
+        scene_prompt_data = scene_data if scene_outline == original_scene_outline else {}
+        elements_instruction = build_elements_instruction(scene_prompt_data)
+        emotion_progress_instruction = build_emotion_progress_instruction(scene_prompt_data, scene_emotion)
 
         condensed_scene_emotion = compress_prompt_hint(scene_emotion, max_len=90)
         style_guardrails = build_style_guardrails()
@@ -432,8 +488,8 @@ def write_story(json_path, target_scene_index=None, context_level=2, user_instru
 2. 不要空写景和无效氛围渲染；环境只在推动动作、关系或情绪时顺手带一句即可。
 3. {intro_instruction}
 4. 本次需要撰写的场景是：【{scene_name}】
-5. 【本场景原始剧情骨架（这是你必须完成的事件顺序）】：{scene_outline}
-6. 【本场景结构微调建议（只吸收有用的一两处，不要被它牵着跑）】：{scene_rewrite_hint if scene_rewrite_hint else "（无）"}
+5. 【本场景当前写作骨架（这是你必须完成的事件顺序，若做过重构就按重构版写）】：{scene_outline}
+6. 【本场景原始旧细纲（仅供对照，若与当前写作骨架冲突，以当前写作骨架为准）】：{scene_outline_reference if scene_outline_reference else "（当前写作骨架与原细纲一致）"}
 7. 【本场景参考原文（只学习语气、节奏、吐槽感、对话感和评论区写法，严禁照抄句子）】：
 {reference_excerpt if reference_excerpt else "（无参考原文，按全局要求写）"}
 8. 本次场景必须体现的核心情绪是：【{condensed_scene_emotion}】。注意只保留这段最核心的情绪落点，情绪要融入具体事件、对话和动作中，不要大段解释。
@@ -442,7 +498,7 @@ def write_story(json_path, target_scene_index=None, context_level=2, user_instru
 11. 不要把普通家庭伦理冲突写成“冷硬悬疑大片”。除非细纲明确要求，否则不要加入额外证物、专业名词、侦探动作或电影化调度。
 {elements_instruction}
 {emotion_progress_instruction}
-14. 如果“结构微调建议”和“参考原文”的自然写法发生冲突，优先保留参考原文那种顺口、有人味、像真人在讲事的路数，再吸收建议中真正有用的一小处。
+14. 如果“当前写作骨架”和“参考原文”的自然写法发生冲突，优先保留参考原文那种顺口、有人味、像真人在讲事的路数，再用当前写作骨架保证事件方向不跑偏。
 15. 少写抽象情绪总结和作者腔套话。比起“她目光复杂、空气凝固、我没露怯”，更优先写“她盯着我不说话，我心里咯噔一下，但还是先笑着叫人”这种活句。
 16. 真到爆点时，不要只写“我心里一沉”“我很乱”。请把那一下失衡落在可见动作上，比如卡壳、打断、回避、嘴硬、反问、装镇定、顺手掩饰、故意试探。
 
@@ -513,14 +569,6 @@ def write_story(json_path, target_scene_index=None, context_level=2, user_instru
                 json.dump(progress_data, f, ensure_ascii=False, indent=2)
                 
             if target_scene_index is not None:
-                # 单场景重写时，也要同步更新 txt 文件，这样前端才能看到最新的文本
-                try:
-                    txt_output_path = output_json_path.replace('_进度.json', '.txt')
-                    with open(txt_output_path, "w", encoding="utf-8") as f:
-                        f.write("\n\n".join(generated_paragraphs))
-                except Exception as e:
-                    print(f"Warning: Failed to update txt file during single scene rewrite: {e}")
-                    
                 # 如果是单场景测试，打印结果并退出
                 print(f"\n--- Test Generation Result for Scene {target_scene_index} ---")
                 print(scene_text)
@@ -553,23 +601,10 @@ def write_story(json_path, target_scene_index=None, context_level=2, user_instru
                 import sys
                 sys.exit(1)
             
-    # 5. 保存最终生成的小说文本
-    print("\n--- Step 3: Saving final story ---")
+    # 5. 生成完成，最终内容已保存在进度 JSON 中
+    print("\n--- Step 3: Final story generation completed ---")
     final_story_text = "\n\n".join(generated_paragraphs)
-    
-    # 清理文件名中可能不合法的字符
-    safe_title = re.sub(r'[\\/*?:"<>|]', "", book_title)
-    
-    # 获取 '重写' 目录路径
-    writer_dir = os.path.dirname(os.path.abspath(__file__))
-    rewrite_dir = os.path.join(writer_dir, "重写")
-    
-    output_txt_path = os.path.join(rewrite_dir, f"{safe_title}.txt")
-    
-    with open(output_txt_path, "w", encoding="utf-8") as f:
-        f.write(final_story_text)
-        
-    print(f"Success! The rewritten story has been saved to: {output_txt_path}")
+    print(f"Success! Progress saved to: {output_json_path}")
     print(f"Total length: {len(final_story_text)} characters.")
 
 if __name__ == "__main__":

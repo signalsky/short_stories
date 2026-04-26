@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 from story_exporter import export_story
+from rewrite_instruction_generator import generate_global_rewrite_instruction
 
 app = Flask(__name__)
 CORS(app)  # 允许跨域请求
@@ -136,6 +137,34 @@ def delete_outline(filename):
             return jsonify({"message": "File deleted successfully"})
         else:
             return jsonify({"error": "File not found"}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/generate_rewrite_instruction', methods=['POST'])
+def generate_rewrite_instruction():
+    """根据所选大纲自动生成全局重写建议"""
+    try:
+        data = request.json or {}
+        outline_filename = data.get('outline_filename')
+        reference_hint = data.get('reference_hint', '')
+
+        if not outline_filename:
+            return jsonify({"error": "No outline selected"}), 400
+
+        outline_path = os.path.join(OUTLINE_DIR, outline_filename)
+        if not os.path.exists(outline_path):
+            return jsonify({"error": "Selected outline file not found"}), 404
+
+        instruction = generate_global_rewrite_instruction(outline_path, reference_hint=reference_hint)
+        return jsonify({
+            "message": "Rewrite instruction generated successfully",
+            "instruction": instruction
+        })
+    except FileNotFoundError as e:
+        return jsonify({"error": str(e)}), 404
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

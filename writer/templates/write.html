@@ -134,8 +134,15 @@
                         </div>
 
                         <div class="space-y-2">
-                            <label class="block text-sm font-semibold text-slate-700" for="globalInstruction">全局重写建议 (可选)</label>
+                            <div class="flex items-center justify-between gap-3">
+                                <label class="block text-sm font-semibold text-slate-700" for="globalInstruction">全局重写建议 (可选)</label>
+                                <button type="button" id="btnGenerateGlobalInstruction" class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium border border-indigo-200 text-indigo-600 hover:bg-indigo-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                                    AI 自动生成
+                                </button>
+                            </div>
                             <textarea id="globalInstruction" rows="6" placeholder="例如：将背景改为八零年代，给女主加上能听到男主心声的读心术..." class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-slate-800 leading-relaxed resize-y"></textarea>
+                            <p class="text-xs text-slate-500 leading-relaxed">点击“AI 自动生成”后，会基于当前选中的大纲生成一份以避免抄袭为目标的全局重写建议，生成后仍可继续手动修改。</p>
                         </div>
 
                         <div class="flex items-center justify-end pt-4">
@@ -246,6 +253,7 @@
         const generateForm = document.getElementById('generateForm');
         const btnSubmitGenerate = document.getElementById('btnSubmitGenerate');
         const btnCancelGenerate = document.getElementById('btnCancelGenerate');
+        const btnGenerateGlobalInstruction = document.getElementById('btnGenerateGlobalInstruction');
         const generatingStatus = document.getElementById('generatingStatus');
         
         const btnEdit = document.getElementById('btnEdit');
@@ -263,10 +271,15 @@
         const rewriteInstruction = document.getElementById('rewriteInstruction');
         const globalInstruction = document.getElementById('globalInstruction');
 
+        const AI_REWRITE_REFERENCE_HINT = `更换背景：可以将现代都市替换为年代文、古代言情、仙侠修真等背景。
+重塑人设：保留核心冲突，但给角色赋予新身份自带矛盾（如：霸总换特种兵、平凡女主换战地医生、白月光换成男主牺牲战友的妹妹）。
+融入新元素：例如增加“弹幕”或“读心术”设定，让女主从被动承受变为拥有上帝视角，更直观地放大委屈感与男主带来的伤害。`;
+
         let currentFilename = null;
         let currentJsonData = null;
         let isEditing = false;
         let currentRewriteSceneIndex = -1;
+        let isGeneratingGlobalInstruction = false;
 
         // Toast 提示
         let toastTimeout;
@@ -409,6 +422,50 @@
                 });
             } catch (err) {
                 outlineSelect.innerHTML = '<option value="" disabled>加载失败，请刷新重试</option>';
+            }
+        }
+
+        async function generateGlobalRewriteInstruction() {
+            const outlineFile = outlineSelect.value;
+            if (!outlineFile) {
+                showToast("请先选择大纲", "需要先选择一个大纲，AI 才能生成对应的重写建议。", true);
+                outlineSelect.focus();
+                return;
+            }
+
+            if (isGeneratingGlobalInstruction) return;
+
+            isGeneratingGlobalInstruction = true;
+            const originalButtonHtml = btnGenerateGlobalInstruction.innerHTML;
+            btnGenerateGlobalInstruction.disabled = true;
+            outlineSelect.disabled = true;
+            globalInstruction.disabled = true;
+            btnGenerateGlobalInstruction.innerHTML = `<svg class="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> 生成中...`;
+
+            try {
+                const res = await fetch('/api/generate_rewrite_instruction', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        outline_filename: outlineFile,
+                        reference_hint: AI_REWRITE_REFERENCE_HINT
+                    })
+                });
+
+                const result = await res.json();
+                if (!res.ok) throw new Error(result.error || "生成失败");
+
+                globalInstruction.value = result.instruction || '';
+                showToast("生成成功", "AI 已根据当前大纲生成全局重写建议，你可以继续手动微调。");
+            } catch (err) {
+                showToast("生成失败", err.message, true);
+                console.error(err);
+            } finally {
+                isGeneratingGlobalInstruction = false;
+                btnGenerateGlobalInstruction.disabled = false;
+                outlineSelect.disabled = false;
+                globalInstruction.disabled = false;
+                btnGenerateGlobalInstruction.innerHTML = originalButtonHtml;
             }
         }
 
@@ -657,11 +714,13 @@
             e.preventDefault();
             const outlineFile = outlineSelect.value;
             if (!outlineFile) return;
+            if (isGeneratingGlobalInstruction) return;
             
             const globalInstruction = document.getElementById('globalInstruction').value.trim();
 
             btnSubmitGenerate.classList.add('hidden');
             btnCancelGenerate.classList.remove('hidden');
+            btnGenerateGlobalInstruction.disabled = true;
             outlineSelect.disabled = true;
             document.getElementById('globalInstruction').disabled = true;
             generatingStatus.classList.remove('hidden');
@@ -694,6 +753,7 @@
             } finally {
                 btnCancelGenerate.classList.add('hidden');
                 btnSubmitGenerate.classList.remove('hidden');
+                btnGenerateGlobalInstruction.disabled = false;
                 outlineSelect.disabled = false;
                 document.getElementById('globalInstruction').disabled = false;
                 generatingStatus.classList.add('hidden');
@@ -917,6 +977,7 @@
         btnNewGenerate.addEventListener('click', () => switchView('create'));
         btnEdit.addEventListener('click', () => setEditMode(true));
         btnSave.addEventListener('click', saveChanges);
+        btnGenerateGlobalInstruction.addEventListener('click', generateGlobalRewriteInstruction);
 
         // 初始加载
         fetchRewrites();
